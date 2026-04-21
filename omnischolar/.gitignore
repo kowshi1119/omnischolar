@@ -1,0 +1,42 @@
+# Environment variables — NEVER commit these
+.env
+.env.local
+.env.production
+
+# Database files (contain student data)
+*.db
+*.sqlite3
+study_db/
+
+# ChromaDB vector store
+chroma/
+__pycache__/
+
+# Python cache
+*.pyc
+*.pyo
+.pytest_cache/
+venv/
+env/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+
+# Virtual environments
+.venv/
+venv/
+
+# Temp / log files
+st_err.txt
+st_log.txt
+st_out.txt
+st_startup.log
+temp.pdf
+*.bak
+_test_imports.py
+test_st.py

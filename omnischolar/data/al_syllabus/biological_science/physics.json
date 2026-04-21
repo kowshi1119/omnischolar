@@ -1,0 +1,17 @@
+{
+  "subject": "Physics",
+  "stream": "Biological Science Stream",
+  "grade_level": "Advanced Level",
+  "source": "National Institute of Education, Sri Lanka",
+  "version": "2017 Revised Syllabus",
+  "total_units": 7,
+  "chapters": [
+    {"unit_id":"PHY-01","name":"Unit 1 — Mechanics","weighting_pct":18,"past_paper_frequency_10yr":10,"subtopics":["Kinematics","Newton's laws","Work, energy, power","Circular motion","Gravitation"]},
+    {"unit_id":"PHY-02","name":"Unit 2 — Thermal Physics","weighting_pct":12,"past_paper_frequency_10yr":8,"subtopics":["Temperature and heat","Kinetic theory of gases","Thermodynamic processes","Heat transfer"]},
+    {"unit_id":"PHY-03","name":"Unit 3 — Waves and Optics","weighting_pct":14,"past_paper_frequency_10yr":9,"subtopics":["Wave properties","Sound waves","Light: reflection, refraction","Interference and diffraction","Lenses and mirrors"]},
+    {"unit_id":"PHY-04","name":"Unit 4 — Electricity and Magnetism","weighting_pct":16,"past_paper_frequency_10yr":10,"subtopics":["Coulomb's law","Electric field and potential","Capacitance","Current electricity","Magnetic fields","Electromagnetic induction"]},
+    {"unit_id":"PHY-05","name":"Unit 5 — Electronics","weighting_pct":10,"past_paper_frequency_10yr":7,"subtopics":["Semiconductor theory","Diodes and transistors","Logic gates","AC circuits"]},
+    {"unit_id":"PHY-06","name":"Unit 6 — Modern Physics","weighting_pct":12,"past_paper_frequency_10yr":8,"subtopics":["Photoelectric effect","Atomic structure","Radioactivity","Nuclear reactions","X-rays"]},
+    {"unit_id":"PHY-07","name":"Unit 7 — Mechanics of Fluids and Materials","weighting_pct":8,"past_paper_frequency_10yr":6,"subtopics":["Pressure in fluids","Archimedes' principle","Viscosity","Elasticity and stress-strain"]}
+  ]
+}

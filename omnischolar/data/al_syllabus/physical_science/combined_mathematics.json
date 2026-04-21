@@ -1,0 +1,16 @@
+{
+  "subject": "Combined Mathematics",
+  "stream": "Physical Science Stream",
+  "grade_level": "Advanced Level",
+  "source": "National Institute of Education, Sri Lanka",
+  "version": "2017 Revised Syllabus",
+  "total_units": 6,
+  "chapters": [
+    {"unit_id":"CM-01","name":"Pure Mathematics I — Algebra and Functions","weighting_pct":18,"past_paper_frequency_10yr":10,"subtopics":["Polynomials","Partial fractions","Quadratic equations","Inequalities","Matrices and determinants"]},
+    {"unit_id":"CM-02","name":"Pure Mathematics II — Calculus","weighting_pct":22,"past_paper_frequency_10yr":10,"subtopics":["Differentiation","Integration","Differential equations","Applications of calculus"]},
+    {"unit_id":"CM-03","name":"Pure Mathematics III — Coordinate Geometry","weighting_pct":14,"past_paper_frequency_10yr":9,"subtopics":["Straight lines","Circles","Conics: parabola, ellipse, hyperbola","Parametric equations"]},
+    {"unit_id":"CM-04","name":"Pure Mathematics IV — Trigonometry","weighting_pct":12,"past_paper_frequency_10yr":9,"subtopics":["Trigonometric functions","Identities","Inverse trig","Complex numbers"]},
+    {"unit_id":"CM-05","name":"Applied Mathematics I — Mechanics","weighting_pct":20,"past_paper_frequency_10yr":10,"subtopics":["Statics: forces, equilibrium","Kinematics","Newton's laws application","Projectile motion","Momentum and impulse"]},
+    {"unit_id":"CM-06","name":"Applied Mathematics II — Statistics & Probability","weighting_pct":14,"past_paper_frequency_10yr":8,"subtopics":["Data representation","Probability theory","Distributions: binomial, normal","Hypothesis testing basics"]}
+  ]
+}

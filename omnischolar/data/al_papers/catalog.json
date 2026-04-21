@@ -1,0 +1,247 @@
+{
+  "_note": "OmniScholar A/L Past Paper Catalog — metadata only. No copyrighted content.",
+  "_source": "Department of Examinations Sri Lanka (www.doenets.lk)",
+  "_copyright": "Actual paper PDFs are copyright Department of Examinations. Students must obtain PDFs independently from official sources or their teachers.",
+  "catalog": [
+    {
+      "id": "bio-2024-p1",
+      "year": 2024, "subject": "Biology", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Cell Biology","Genetics","Plant Biology","Animal Physiology","Ecology"]
+    },
+    {
+      "id": "bio-2024-p2",
+      "year": 2024, "subject": "Biology", "stream": "Biological Science Stream",
+      "paper_type": "Structured/Essay", "part": "Part II",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 10, "total_marks": 100,
+      "duration_minutes": 180,
+      "marking_scheme_available": true,
+      "topic_tags": ["Biochemistry","Molecular Biology","Ecology","Human Health","Plant Biology"]
+    },
+    {
+      "id": "bio-2023-p1",
+      "year": 2023, "subject": "Biology", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Cell Biology","Genetics","Microbiology","Animal Physiology","Evolution"]
+    },
+    {
+      "id": "bio-2023-p2",
+      "year": 2023, "subject": "Biology", "stream": "Biological Science Stream",
+      "paper_type": "Structured/Essay", "part": "Part II",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 10, "total_marks": 100,
+      "duration_minutes": 180,
+      "marking_scheme_available": true,
+      "topic_tags": ["Plant Biology","Genetics","Human Health","Ecology","Biochemistry"]
+    },
+    {
+      "id": "bio-2022-p1",
+      "year": 2022, "subject": "Biology", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Cell Biology","Biochemistry","Genetics","Plant Biology","Ecology"]
+    },
+    {
+      "id": "bio-2022-p2",
+      "year": 2022, "subject": "Biology", "stream": "Biological Science Stream",
+      "paper_type": "Structured/Essay", "part": "Part II",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 10, "total_marks": 100,
+      "duration_minutes": 180,
+      "marking_scheme_available": false,
+      "topic_tags": ["Animal Physiology","Molecular Biology","Evolution","Human Health","Ecology"]
+    },
+    {
+      "id": "bio-2021-p1",
+      "year": 2021, "subject": "Biology", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Cell Biology","Genetics","Microbiology","Plant Biology","Animal Physiology"]
+    },
+    {
+      "id": "bio-2021-p2",
+      "year": 2021, "subject": "Biology", "stream": "Biological Science Stream",
+      "paper_type": "Structured/Essay", "part": "Part II",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 10, "total_marks": 100,
+      "duration_minutes": 180,
+      "marking_scheme_available": true,
+      "topic_tags": ["Biochemistry","Evolution","Plant Biology","Human Health","Ecology"]
+    },
+    {
+      "id": "bio-2020-p1",
+      "year": 2020, "subject": "Biology", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Cell Biology","Genetics","Animal Physiology","Ecology","Plant Biology"]
+    },
+    {
+      "id": "bio-2020-p2",
+      "year": 2020, "subject": "Biology", "stream": "Biological Science Stream",
+      "paper_type": "Structured/Essay", "part": "Part II",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 10, "total_marks": 100,
+      "duration_minutes": 180,
+      "marking_scheme_available": false,
+      "topic_tags": ["Molecular Biology","Biochemistry","Plant Biology","Human Health","Ecology"]
+    },
+    {
+      "id": "bio-2019-p1",
+      "year": 2019, "subject": "Biology", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Cell Biology","Genetics","Microbiology","Evolution","Animal Physiology"]
+    },
+    {
+      "id": "bio-2018-p1",
+      "year": 2018, "subject": "Biology", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Cell Biology","Biochemistry","Genetics","Plant Biology","Ecology"]
+    },
+    {
+      "id": "bio-2017-p1",
+      "year": 2017, "subject": "Biology", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Genetics","Cell Biology","Animal Physiology","Plant Biology","Evolution"]
+    },
+    {
+      "id": "bio-2016-p1",
+      "year": 2016, "subject": "Biology", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Ecology","Cell Biology","Biochemistry","Animal Physiology","Genetics"]
+    },
+    {
+      "id": "bio-2015-p1",
+      "year": 2015, "subject": "Biology", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Genetics","Molecular Biology","Ecology","Plant Biology","Human Health"]
+    },
+    {
+      "id": "chem-2024-p1",
+      "year": 2024, "subject": "Chemistry", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Organic Chemistry","Equilibrium","Electrochemistry","Atomic Structure","Kinetics"]
+    },
+    {
+      "id": "chem-2023-p1",
+      "year": 2023, "subject": "Chemistry", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Chemical Energetics","Organic Chemistry","States of Matter","Equilibrium","Electrochemistry"]
+    },
+    {
+      "id": "chem-2022-p1",
+      "year": 2022, "subject": "Chemistry", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Organic Chemistry","Atomic Structure","Chemical Bonding","Kinetics","Equilibrium"]
+    },
+    {
+      "id": "chem-2021-p1",
+      "year": 2021, "subject": "Chemistry", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Organic Chemistry","Electrochemistry","Chemical Energetics","Equilibrium","Industrial Chemistry"]
+    },
+    {
+      "id": "phy-2024-p1",
+      "year": 2024, "subject": "Physics", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Mechanics","Electricity","Waves","Modern Physics","Thermal Physics"]
+    },
+    {
+      "id": "phy-2023-p1",
+      "year": 2023, "subject": "Physics", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Mechanics","Magnetism","Optics","Electronics","Modern Physics"]
+    },
+    {
+      "id": "phy-2022-p1",
+      "year": 2022, "subject": "Physics", "stream": "Biological Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Mechanics","Electricity","Thermal Physics","Waves","Modern Physics"]
+    },
+    {
+      "id": "cm-2024-p1",
+      "year": 2024, "subject": "Combined Mathematics", "stream": "Physical Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Calculus","Algebra","Mechanics","Trigonometry","Coordinate Geometry"]
+    },
+    {
+      "id": "cm-2023-p1",
+      "year": 2023, "subject": "Combined Mathematics", "stream": "Physical Science Stream",
+      "paper_type": "MCQ", "part": "Part I",
+      "medium": ["Sinhala", "Tamil", "English"],
+      "total_questions": 50, "total_marks": 50,
+      "duration_minutes": 60,
+      "marking_scheme_available": true,
+      "topic_tags": ["Calculus","Probability","Mechanics","Algebra","Coordinate Geometry"]
+    }
+  ]
+}

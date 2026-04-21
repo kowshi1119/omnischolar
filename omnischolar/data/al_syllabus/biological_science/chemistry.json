@@ -1,0 +1,18 @@
+{
+  "subject": "Chemistry",
+  "stream": "Biological Science Stream",
+  "grade_level": "Advanced Level",
+  "source": "National Institute of Education, Sri Lanka",
+  "version": "2017 Revised Syllabus",
+  "total_units": 8,
+  "chapters": [
+    {"unit_id":"CHEM-01","name":"Unit 1 — Atomic Structure and Chemical Bonding","weighting_pct":12,"past_paper_frequency_10yr":9,"subtopics":["Atomic structure","Periodic table trends","Ionic and covalent bonding","Metallic bonding","VSEPR theory","Hybridisation"]},
+    {"unit_id":"CHEM-02","name":"Unit 2 — States of Matter","weighting_pct":8,"past_paper_frequency_10yr":7,"subtopics":["Kinetic molecular theory","Gas laws","Liquids and intermolecular forces","Solids and crystal structures"]},
+    {"unit_id":"CHEM-03","name":"Unit 3 — Chemical Energetics","weighting_pct":10,"past_paper_frequency_10yr":8,"subtopics":["Enthalpy changes","Hess's law","Bond energies","Entropy and Gibbs free energy"]},
+    {"unit_id":"CHEM-04","name":"Unit 4 — Chemical Equilibrium","weighting_pct":11,"past_paper_frequency_10yr":9,"subtopics":["Le Chatelier's principle","Kc and Kp expressions","Acid-base equilibria","Buffer solutions","Solubility product"]},
+    {"unit_id":"CHEM-05","name":"Unit 5 — Electrochemistry","weighting_pct":9,"past_paper_frequency_10yr":8,"subtopics":["Redox reactions","Electrolysis","Electrochemical cells","Standard electrode potentials"]},
+    {"unit_id":"CHEM-06","name":"Unit 6 — Reaction Kinetics","weighting_pct":9,"past_paper_frequency_10yr":7,"subtopics":["Rate of reaction","Rate laws and order","Activation energy","Catalysis"]},
+    {"unit_id":"CHEM-07","name":"Unit 7 — Organic Chemistry","weighting_pct":22,"past_paper_frequency_10yr":10,"subtopics":["Hydrocarbons: alkanes, alkenes, alkynes","Aromatic chemistry","Halogenoalkanes","Alcohols, aldehydes, ketones","Carboxylic acids and derivatives","Amines","Polymers","Reaction mechanisms"]},
+    {"unit_id":"CHEM-08","name":"Unit 8 — Industrial and Environmental Chemistry","weighting_pct":9,"past_paper_frequency_10yr":6,"subtopics":["Industrial processes: Haber, Contact","Water treatment","Atmospheric chemistry","Green chemistry principles"]}
+  ]
+}

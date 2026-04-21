@@ -1,0 +1,17 @@
+{
+  "subject": "Accounting",
+  "stream": "Commerce Stream",
+  "grade_level": "Advanced Level",
+  "source": "National Institute of Education, Sri Lanka",
+  "version": "2017 Revised Syllabus",
+  "note": "Stub syllabus — fill in detailed units from NIE syllabus document.",
+  "total_units": 6,
+  "chapters": [
+    {"unit_id":"ACC-01","name":"Unit 1 — Introduction to Accounting","weighting_pct":10,"past_paper_frequency_10yr":8,"subtopics":["Accounting concepts and conventions","Double entry system","Journal and ledger"]},
+    {"unit_id":"ACC-02","name":"Unit 2 — Financial Statements","weighting_pct":20,"past_paper_frequency_10yr":10,"subtopics":["Trial balance","Income statement","Balance sheet","Cash flow statements"]},
+    {"unit_id":"ACC-03","name":"Unit 3 — Partnership Accounts","weighting_pct":15,"past_paper_frequency_10yr":9,"subtopics":["Partnership agreements","Profit sharing","Admission and retirement of partners"]},
+    {"unit_id":"ACC-04","name":"Unit 4 — Company Accounts","weighting_pct":18,"past_paper_frequency_10yr":9,"subtopics":["Share capital","Debentures","Final accounts of companies"]},
+    {"unit_id":"ACC-05","name":"Unit 5 — Cost Accounting","weighting_pct":17,"past_paper_frequency_10yr":8,"subtopics":["Cost classification","Job costing","Marginal costing","Break-even analysis"]},
+    {"unit_id":"ACC-06","name":"Unit 6 — Management Accounting","weighting_pct":20,"past_paper_frequency_10yr":8,"subtopics":["Budgeting","Variance analysis","Decision making"]}
+  ]
+}

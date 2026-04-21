@@ -1,0 +1,135 @@
+{
+  "subject": "Biology",
+  "stream": "Biological Science Stream",
+  "grade_level": "Advanced Level",
+  "source": "National Institute of Education, Sri Lanka",
+  "version": "2017 Revised Syllabus",
+  "total_units": 9,
+  "chapters": [
+    {
+      "unit_id": "BIO-01",
+      "name": "Unit 1 — Cell Biology",
+      "weighting_pct": 12,
+      "past_paper_frequency_10yr": 9,
+      "subtopics": [
+        "Cell theory and types of cells",
+        "Prokaryotic vs eukaryotic cell structure",
+        "Cell organelles and functions",
+        "Cell membrane structure and fluid mosaic model",
+        "Cell division: mitosis and meiosis"
+      ]
+    },
+    {
+      "unit_id": "BIO-02",
+      "name": "Unit 2 — Biochemistry",
+      "weighting_pct": 10,
+      "past_paper_frequency_10yr": 8,
+      "subtopics": [
+        "Carbohydrates: monosaccharides, disaccharides, polysaccharides",
+        "Lipids: structure and functions",
+        "Proteins: amino acids, peptide bonds, protein structure",
+        "Enzymes: structure, action, inhibition",
+        "Nucleic acids: DNA and RNA structure"
+      ]
+    },
+    {
+      "unit_id": "BIO-03",
+      "name": "Unit 3 — Molecular Biology and Genetics",
+      "weighting_pct": 11,
+      "past_paper_frequency_10yr": 10,
+      "subtopics": [
+        "DNA replication",
+        "Transcription and translation",
+        "Genetic code and mutations",
+        "Mendelian genetics and inheritance",
+        "Chromosomal inheritance: sex linkage, linkage",
+        "Gene regulation"
+      ]
+    },
+    {
+      "unit_id": "BIO-04",
+      "name": "Unit 4 — Evolution and Biodiversity",
+      "weighting_pct": 8,
+      "past_paper_frequency_10yr": 7,
+      "subtopics": [
+        "Darwin's theory of natural selection",
+        "Evidence for evolution",
+        "Mechanisms of speciation",
+        "Classification of organisms: Kingdoms",
+        "Phylogeny and taxonomy"
+      ]
+    },
+    {
+      "unit_id": "BIO-05",
+      "name": "Unit 5 — Microbiology and Biotechnology",
+      "weighting_pct": 9,
+      "past_paper_frequency_10yr": 7,
+      "subtopics": [
+        "Bacteria: structure, reproduction, importance",
+        "Viruses: structure and replication cycles",
+        "Fungi and algae overview",
+        "Biotechnology: fermentation, genetic engineering",
+        "Recombinant DNA technology and PCR"
+      ]
+    },
+    {
+      "unit_id": "BIO-06",
+      "name": "Unit 6 — Plant Biology",
+      "weighting_pct": 12,
+      "past_paper_frequency_10yr": 9,
+      "subtopics": [
+        "Plant tissue types: meristematic, permanent",
+        "Root structure and mineral absorption",
+        "Stem and leaf structure",
+        "Transpiration and stomatal regulation",
+        "Translocation in phloem",
+        "Osmosis and water potential",
+        "Photosynthesis: light and dark reactions",
+        "Plant hormones: auxin, gibberellin, cytokinin"
+      ]
+    },
+    {
+      "unit_id": "BIO-07",
+      "name": "Unit 7 — Animal Biology (Physiology)",
+      "weighting_pct": 14,
+      "past_paper_frequency_10yr": 10,
+      "subtopics": [
+        "Nutrition and digestion",
+        "Circulatory system: heart, blood, vessels",
+        "Respiratory system: ventilation and gas exchange",
+        "Excretion: kidney structure and nephron",
+        "Nervous system: neuron, synapse, reflex arc",
+        "Endocrine system: hormones and feedback",
+        "Musculoskeletal system: muscle contraction"
+      ]
+    },
+    {
+      "unit_id": "BIO-08",
+      "name": "Unit 8 — Ecology and Environment",
+      "weighting_pct": 12,
+      "past_paper_frequency_10yr": 8,
+      "subtopics": [
+        "Ecosystems: biotic and abiotic components",
+        "Energy flow: food chains, webs, pyramids",
+        "Biogeochemical cycles: carbon, nitrogen, water",
+        "Population ecology: growth models",
+        "Community ecology: succession",
+        "Conservation biology and biodiversity loss"
+      ]
+    },
+    {
+      "unit_id": "BIO-09",
+      "name": "Unit 9 — Human Health and Disease",
+      "weighting_pct": 12,
+      "past_paper_frequency_10yr": 8,
+      "subtopics": [
+        "Immune system: innate and adaptive immunity",
+        "Antibodies and vaccination",
+        "Communicable diseases: bacterial and viral",
+        "Non-communicable diseases: cancer, diabetes",
+        "Reproductive health",
+        "Drug action and pharmacology overview"
+      ]
+    }
+  ]
+}

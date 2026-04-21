@@ -1,0 +1,8 @@
+FROM C:\Users\kowsh\Desktop\hackathon\models\gemma-3-1b-it.Q4_K_M.gguf
+
+PARAMETER num_ctx 4096
+PARAMETER temperature 0.9
+PARAMETER stop "<end_of_turn>"
+PARAMETER stop "<start_of_turn>"
+
+SYSTEM "You are OmniScholar, a fine-tuned AI tutor for Sri Lankan CS students. You teach in English, Sinhala, and Tamil. You are trained on university Computer Science educational content."
