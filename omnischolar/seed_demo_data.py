@@ -21,6 +21,11 @@ DEMO_EXAM_DATE = str(date.today() + timedelta(days=45))
 
 
 def seed():
+    # Ensure all tables exist before inserting
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from database import init_db
+    init_db()
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
@@ -35,7 +40,8 @@ def seed():
         ""
     ))
 
-    # ── Chapter scores ─────────────────────────────────────────────────────
+    # ── Chapter scores via quiz_history ───────────────────────────────────
+    # chapter_scores is derived from quiz_history — seed via quiz records
     chapters = [
         ("Data Structures", 78),
         ("Sorting Algorithms", 52),
@@ -48,11 +54,11 @@ def seed():
     ]
     for chapter, score in chapters:
         c.execute("""
-            INSERT OR REPLACE INTO chapter_scores
-              (student_id, subject, chapter_name, score, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-        """, (DEMO_STUDENT_ID, DEMO_SUBJECT, chapter, score,
-              datetime.now().isoformat()))
+            INSERT INTO quiz_history
+              (student_id, topic, score, total, misconception, session_date)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (DEMO_STUDENT_ID, chapter, score, 100, None,
+              datetime.now().isoformat()[:10]))
 
     # ── Quiz history (last 7 days) ─────────────────────────────────────────
     quiz_topics = [
@@ -160,10 +166,10 @@ def seed_kavindi():
     )
     for subj, chapter, score in all_chapters_flat:
         c.execute("""
-            INSERT OR REPLACE INTO chapter_scores
-              (student_id, subject, chapter_name, score, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-        """, (KAVINDI_ID, subj, chapter, score, datetime.now().isoformat()))
+            INSERT INTO quiz_history
+              (student_id, topic, score, total, misconception, session_date)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (KAVINDI_ID, chapter, score, 100, None, datetime.now().isoformat()[:10]))
 
     # ── Quiz history ──────────────────────────────────────────────────────
     kavindi_quiz = [
@@ -193,9 +199,9 @@ def seed_kavindi():
     for concept, topic, error_type in kavindi_weak:
         c.execute("""
             INSERT OR IGNORE INTO weak_concepts
-              (student_id, concept, topic, error_type, frequency, resolved, last_seen)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (KAVINDI_ID, concept, topic, error_type, 2, 0, datetime.now().isoformat()))
+              (student_id, concept, subject, resolved)
+            VALUES (?, ?, ?, 0)
+        """, (KAVINDI_ID, concept, topic))
 
     # ── Study streak (last 7 days) ────────────────────────────────────────
     for i in range(7):

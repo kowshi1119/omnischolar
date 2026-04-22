@@ -32,6 +32,7 @@ from ui_components import (
     render_gemma_badges,
     render_impact_counter,
     render_system_status,
+    render_today_focus,
     COLORS,
 )
 from achievement import render_achievement_mode
@@ -268,7 +269,13 @@ def _render_sidebar():
             st.session_state["chat_history"] = []
             st.rerun()
         st.divider()
-        st.caption(f"Model: {OLLAMA_MODEL}")
+        st.sidebar.markdown(
+            f'<div style="text-align:center;padding:6px;">'
+            f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:8px;'
+            f'color:#1A3050;letter-spacing:0.12em;">'
+            f'Model: {os.getenv("OLLAMA_MODEL", OLLAMA_MODEL)}</span></div>',
+            unsafe_allow_html=True,
+        )
         try:
             streak = db.get_study_streak(st.session_state["student_id"])
         except Exception:
@@ -459,7 +466,7 @@ def _render_dashboard(student):
         render_chapter_bars(chapter_data)
     todays_topic = get_todays_topic(student)
     if todays_topic:
-        st.info(f"Today's focus: {todays_topic}")
+        render_today_focus(topic=todays_topic, days_left=student["days_remaining"])
 
     # ── Gemma 4 Feature Badges ────────────────────────────────────────────
     render_gemma_badges()
