@@ -447,6 +447,113 @@ def inject_premium_css():
         font-family: 'JetBrains Mono', monospace;
     }
 
+    /* ══════════════════════════════════════
+       MULTISELECT TAGS
+    ══════════════════════════════════════ */
+    .stMultiSelect > div > div {
+        background: rgba(8,16,32,0.9) !important;
+        border: 1px solid rgba(0,212,255,0.2) !important;
+        border-radius: 6px !important;
+    }
+    .stMultiSelect [data-baseweb="tag"] {
+        background: rgba(0,212,255,0.1) !important;
+        color: #00D4FF !important;
+        border-radius: 4px !important;
+    }
+
+    /* ══════════════════════════════════════
+       SLIDER
+    ══════════════════════════════════════ */
+    .stSlider > div > div > div {
+        background: rgba(0,212,255,0.1) !important;
+    }
+    .stSlider > div > div > div > div {
+        background: linear-gradient(90deg, #003A58, #00D4FF) !important;
+    }
+
+    /* ══════════════════════════════════════
+       FILE UPLOADER
+    ══════════════════════════════════════ */
+    [data-testid="stFileUploader"] {
+        background: rgba(8,16,32,0.9) !important;
+        border: 1px dashed rgba(0,212,255,0.25) !important;
+        border-radius: 6px !important;
+    }
+    [data-testid="stFileUploader"]:hover {
+        border-color: rgba(0,212,255,0.5) !important;
+        background: rgba(0,20,45,0.95) !important;
+    }
+
+    /* ══════════════════════════════════════
+       SPINNER
+    ══════════════════════════════════════ */
+    .stSpinner > div {
+        border-top-color: #00D4FF !important;
+    }
+
+    /* ══════════════════════════════════════
+       CODE BLOCKS
+    ══════════════════════════════════════ */
+    .stCodeBlock {
+        background: rgba(6,10,20,0.95) !important;
+        border: 1px solid rgba(0,212,255,0.12) !important;
+        border-radius: 6px !important;
+    }
+    code {
+        color: #00D4FF !important;
+        background: rgba(0,212,255,0.06) !important;
+        padding: 1px 5px !important;
+        border-radius: 3px !important;
+        font-family: 'JetBrains Mono', monospace !important;
+        font-size: 0.82rem !important;
+    }
+
+    /* ══════════════════════════════════════
+       DATAFRAMES
+    ══════════════════════════════════════ */
+    [data-testid="stDataFrame"] {
+        border: 1px solid rgba(0,212,255,0.1) !important;
+        border-radius: 6px !important;
+        overflow: hidden !important;
+    }
+
+    /* ══════════════════════════════════════
+       ACTIVE MODE HIGHLIGHT
+    ══════════════════════════════════════ */
+    [data-testid="stSidebar"] .stRadio [aria-checked="true"] + div {
+        color: #00D4FF !important;
+        font-weight: 600 !important;
+    }
+    [data-testid="stSidebar"] .stRadio div[data-testid] {
+        padding: 2px 0 !important;
+    }
+
+    /* ══════════════════════════════════════
+       PAGE FADE-IN
+    ══════════════════════════════════════ */
+    [data-testid="stMain"] > div {
+        animation: omni-fadein 0.25s ease;
+    }
+    @keyframes omni-fadein {
+        from { opacity: 0; transform: translateY(6px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ══════════════════════════════════════
+       EXPANDER CONTENT TEXT
+    ══════════════════════════════════════ */
+    .streamlit-expanderContent p,
+    .streamlit-expanderContent li,
+    .streamlit-expanderContent span {
+        color: #8AAAC0 !important;
+    }
+    .streamlit-expanderContent strong {
+        color: #C0D8F0 !important;
+    }
+    .streamlit-expanderContent code {
+        color: #00D4FF !important;
+    }
+
     </style>
     """, unsafe_allow_html=True)
 
@@ -761,6 +868,31 @@ def render_urgency_countdown(days_left: int, subject: str) -> None:
         st.sidebar.info(f"📅 {days_left} days to exam")
     else:
         st.sidebar.success(f"📅 {days_left} days to exam")
+
+
+# ── Daily focus prompt ────────────────────────────────────────────────────────
+
+def render_today_focus(topic: str = "", days_left: int = 0) -> None:
+    """Daily launch prompt showing today's study focus."""
+    if not topic:
+        return
+    urgency = "🔥" if days_left <= 7 else "📌"
+    st.markdown(f"""
+    <div style="background:rgba(0,212,255,0.04);
+                border:1px solid rgba(0,212,255,0.12);
+                border-left:3px solid #00D4FF;
+                border-radius:0 6px 6px 0;
+                padding:10px 14px;margin:8px 0;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:8px;
+                   color:#1E3A5A;letter-spacing:0.15em;">{urgency} TODAY'S FOCUS · </span>
+      <span style="font-size:0.85rem;color:#4A7090;font-family:'Space Grotesk',sans-serif;">
+        {topic}
+      </span>
+      <span style="font-size:0.75rem;color:#1A3050;margin-left:8px;">
+        · {days_left} days to exam
+      </span>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 # ── Metric card ────────────────────────────────────────────────────────────────
