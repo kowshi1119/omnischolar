@@ -4,3 +4,4 @@ chromadb>=0.5.23
 pymupdf>=1.25.0
 Pillow>=10.0.0
 reportlab>=4.0.0
+rank-bm25>=0.2.2

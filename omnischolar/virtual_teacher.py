@@ -24,12 +24,10 @@ import streamlit.components.v1 as components
 from prompt import (
     VIRTUAL_TEACHER_PROMPT,
     VIRTUAL_TEACHER_EVAL_PROMPT,
-    VIRTUAL_TEACHER_DIAGRAM_PROMPT,
-    VIRTUAL_TEACHER_MID_QUESTION_PROMPT,
     VIRTUAL_TEACHER_SOCRATIC_FOLLOWUP,
     VIRTUAL_TEACHER_RECAP_PROMPT,
 )
-from rag import retrieve_context
+from rag import retrieve_context, retrieve_context_hybrid
 
 
 # ── Lesson memory across topics in session ────────────────────────────────────
@@ -58,25 +56,66 @@ class VirtualTeacher:
 
     def teach(self, topic: str, subject: str, student_id: str,
               language: str) -> dict:
-        """Generate full lesson dict. RAG-grounded. Returns rich lesson object."""
+        """Single call returns lesson + diagram spec + mid-question together."""
         try:
-            rag_context, sources = retrieve_context(topic, subject, n_results=3)
+            rag_context, sources = retrieve_context_hybrid(topic, subject, n_results=3)
         except Exception:
             rag_context, sources = "", []
 
-        prompt = VIRTUAL_TEACHER_PROMPT.format(
-            subject=subject, name="the student",
-            language=language, topic=topic,
-            rag_context=rag_context or "No uploaded materials for this topic.",
+        # ONE COMBINED PROMPT — returns all components in one model call
+        combined_prompt = (
+            "You are Dr. Omni teaching {topic} in {subject}.\n"
+            "Student language: {language}\n\n"
+            "Study materials:\n"
+            "{rag_context}\n\n"
+            "Return ONLY this JSON (no text outside it):\n"
+            "{{\n"
+            "  \"hook\": \"2-3 sentences. Real-world analogy from Sri Lankan daily life. In {language}.\",\n"
+            "  \"explanation\": \"150 words max. Definition \u2192 mechanism \u2192 complexity (if CS) \u2192 Sri Lankan example \u2192 exam trap. In {language}.\",\n"
+            "  \"worked_example\": \"Step-by-step trace with ACTUAL VALUES, not placeholders. Every step annotated. In {language}.\",\n"
+            "  \"exam_hook\": [\n"
+            "    \"Examiner Q1: Define/State \u2014 In {language}.\",\n"
+            "    \"Examiner Q2: Compare/Distinguish \u2014 In {language}.\",\n"
+            "    \"Examiner Q3: Apply/Trace \u2014 In {language}.\"\n"
+            "  ],\n"
+            "  \"check_questions\": [\n"
+            "    {{\"question\": \"Recall question in {language}.\", \"expected_key_points\": \"2-3 specific technical points\"}},\n"
+            "    {{\"question\": \"Application scenario question in {language}.\", \"expected_key_points\": \"specific steps expected\"}}\n"
+            "  ],\n"
+            "  \"diagram_spec\": {{\n"
+            "    \"type\": \"flowchart TD or classDiagram or sequenceDiagram or stateDiagram-v2\",\n"
+            "    \"mermaid_code\": \"Complete valid Mermaid code. Dark theme. Named nodes not generic labels.\",\n"
+            "    \"title\": \"Visual: {topic}\"\n"
+            "  }},\n"
+            "  \"mid_question\": {{\n"
+            "    \"question\": \"Quick check \u2014 one probe question testing core mechanism. In {language}.\",\n"
+            "    \"expected\": \"2-3 specific points the answer must contain\",\n"
+            "    \"hint\": \"One directional hint without giving the answer. In {language}.\"\n"
+            "  }}\n"
+            "}}"
+        ).format(
+            topic=topic,
+            subject=subject,
+            language=language,
+            rag_context=rag_context or "No materials uploaded \u2014 use curriculum knowledge.",
         )
 
         try:
-            raw = self.client.chat(
-                messages=[{"role": "user", "content": prompt}],
-                system_prompt="",
-                temperature=0.9,
-                num_ctx=4096,
-            )
+            from telemetry import timed as _timed
+            _ctx = _timed("teach_latency", metadata=f"topic={topic[:30]}")
+        except Exception:
+            from contextlib import nullcontext
+            _ctx = nullcontext()
+
+        try:
+            with _ctx:
+                raw = self.client.chat(
+                    messages=[{"role": "user", "content": combined_prompt}],
+                    system_prompt="",
+                    temperature=0.9,
+                    num_ctx=3072,
+                    num_predict=1024,
+                )
         except Exception as exc:
             raw = json.dumps({
                 "hook": f"Let's explore {topic} together.",
@@ -91,6 +130,16 @@ class VirtualTeacher:
                     {"question": f"What is {topic}?",
                      "expected_key_points": "basic understanding"},
                 ],
+                "diagram_spec": {
+                    "mermaid_code": f"flowchart TD\n    A[{topic}] --> B[Key Concept]\n    style A fill:#1A2540,stroke:#00D4FF,color:#E8F0FF",
+                    "type": "flowchart TD",
+                    "title": f"Visual: {topic}",
+                },
+                "mid_question": {
+                    "question": f"Quick check \u2014 what is {topic} in one sentence?",
+                    "expected": "basic definition",
+                    "hint": f"Focus on what {topic} does and why it matters.",
+                },
             })
 
         lesson = self._parse_lesson(raw, topic)
@@ -99,68 +148,11 @@ class VirtualTeacher:
         lesson["_subject"] = subject
         lesson["_language"] = language
 
-        lesson["_diagram"] = self.generate_diagram(topic, subject)
-
-        lesson["_mid_question"] = self.generate_mid_question(
-            topic, subject,
-            just_explained=lesson.get("explanation", "")[:300],
-            name="the student",
-            language=language,
-        )
+        # Extract diagram and mid-question from combined response
+        lesson["_diagram"] = lesson.pop("diagram_spec", {}).get("mermaid_code", "")
+        lesson["_mid_question"] = lesson.pop("mid_question", {})
 
         return lesson
-
-    # ── Diagram generation ────────────────────────────────────────────────────
-
-    def generate_diagram(self, topic: str, subject: str) -> str:
-        """Generate Mermaid diagram code for the topic. Returns raw mermaid string."""
-        prompt = VIRTUAL_TEACHER_DIAGRAM_PROMPT.format(
-            topic=topic, subject=subject
-        )
-        try:
-            raw = self.client.fast_chat(
-                message=prompt,
-                system="Return ONLY Mermaid diagram code. No markdown fences. No explanation.",
-                max_tokens=500,
-            )
-            raw = raw.strip()
-            for fence in ["```mermaid", "```", "~~~"]:
-                raw = raw.replace(fence, "").strip()
-            return raw
-        except Exception:
-            return f"""flowchart TD
-    A[{topic}] --> B[Key Concept 1]
-    A --> C[Key Concept 2]
-    A --> D[Key Concept 3]
-    B --> E[Application]
-    C --> E
-    style A fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
-    style E fill:#0D1B35,stroke:#00C850,color:#E8F0FF"""
-
-    # ── Mid-lesson question generation ───────────────────────────────────────
-
-    def generate_mid_question(self, topic: str, subject: str,
-                              just_explained: str, name: str,
-                              language: str = "english") -> dict:
-        """Generate a single sharp mid-lesson check question."""
-        prompt = VIRTUAL_TEACHER_MID_QUESTION_PROMPT.format(
-            topic=topic, subject=subject,
-            just_explained=just_explained, language=language,
-        )
-        try:
-            raw = self.client.fast_chat(
-                message=prompt,
-                system="Return ONLY valid JSON. No markdown. Be conversational.",
-                max_tokens=250,
-            )
-            raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-            return json.loads(raw)
-        except Exception:
-            return {
-                "question": f"Quick check — can you explain {topic} in one sentence?",
-                "expected": "basic definition in own words",
-                "hint": f"Think about what {topic} does and why it matters.",
-            }
 
     # ── Socratic follow-up ────────────────────────────────────────────────────
 
@@ -254,6 +246,27 @@ class VirtualTeacher:
                 )
             except Exception:
                 pass
+
+        # ── Safety eval + telemetry ─────────────────────────────────────
+        try:
+            from tutor_eval import score_tutor_response
+            from telemetry import log_event
+            eval_result = score_tutor_response(student_answer, feedback)
+            if self.db:
+                self.db.log_tutor_quality(
+                    student_id=student_id,
+                    topic=topic,
+                    harm_flags=eval_result["harm_flags"],
+                    scaffolding_score=eval_result["scaffolding_score"],
+                    grounding_score=eval_result["grounding_score"],
+                    overall_quality=eval_result["overall_quality"],
+                )
+            log_event("tutor_eval", metadata=f"quality={eval_result['overall_quality']}")
+            # Expose for sidebar quality badge
+            import streamlit as _st
+            _st.session_state["_last_tutor_quality"] = eval_result
+        except Exception:
+            pass
 
         return {"correct": correct, "feedback": feedback, "weakness": weakness}
 
@@ -719,35 +732,146 @@ def render_avatar_teacher(text: str = "", phase: str = "greeting",
 # ── Mermaid diagram renderer ─────────────────────────────────────────────────
 
 def render_mermaid_diagram(mermaid_code: str, title: str = "") -> None:
-    """Render a Mermaid diagram inline using CDN (works offline after first load)."""
-    if not mermaid_code or not mermaid_code.strip():
-        return
-    title_html = ('<div style="font-size:0.65rem;color:#00D4FF;letter-spacing:0.15em;text-transform:uppercase;margin-bottom:10px;">📊 ' + title + '</div>') if title else ''
-    components.html(f"""
-    <div style="background:#0A0F1E;border:1px solid rgba(0,212,255,0.2);
-                border-radius:12px;padding:16px;margin:8px 0;">
-      {title_html}
-      <div class="mermaid" style="background:transparent;">
-{mermaid_code}
-      </div>
-    </div>
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
-    <script>
-      mermaid.initialize({{
-        startOnLoad: true,
-        theme: 'dark',
-        themeVariables: {{
-          primaryColor: '#1A2540',
-          primaryTextColor: '#E8F0FF',
-          primaryBorderColor: '#00D4FF',
-          lineColor: '#00D4FF',
-          secondaryColor: '#0D1B35',
-          tertiaryColor: '#111929',
-          background: '#0A0F1E',
-        }}
-      }});
-    </script>
-    """, height=320)
+        """
+        Premium Mermaid diagram with:
+        - Mermaid v11 'neo' look (automatic shadows, modern rounding)
+        - Dark navy theme matching OmniScholar brand
+        - CSS 3D depth effect via layered drop-shadow
+        - Fade-in animation on load
+        """
+        if not mermaid_code or not mermaid_code.strip():
+                return
+
+        code = mermaid_code.strip()
+        for fence in ["```mermaid", "```", "~~~"]:
+                code = code.replace(fence, "").strip()
+
+        escaped = (
+                code
+                .replace("\\", "\\\\")
+                .replace("`", "\\`")
+                .replace("$", "\\$")
+        )
+
+        title_html = f'<div class="diagram-title">📊 {title}</div>' if title else ""
+
+        components.html(f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <style>
+            body {{ background: transparent; margin: 0; padding: 0; }}
+            .diagram-wrapper {{
+                background: linear-gradient(145deg, #0A1628, #0E1E3C);
+                border: 1px solid rgba(0,212,255,0.2);
+                border-radius: 12px;
+                padding: 20px;
+                margin: 8px 0;
+                position: relative;
+                overflow: hidden;
+                box-shadow:
+                    0 4px 6px rgba(0,0,0,0.4),
+                    0 8px 15px rgba(0,0,0,0.3),
+                    0 20px 40px rgba(0,0,0,0.25),
+                    0 0 0 1px rgba(0,212,255,0.05),
+                    inset 0 1px 0 rgba(255,255,255,0.06);
+                animation: diagramFadeIn 0.6s cubic-bezier(0.16,1,0.3,1) forwards;
+                opacity: 0;
+                transform: translateY(8px);
+            }}
+            .diagram-wrapper::before {{
+                content: '';
+                position: absolute;
+                top: 0; left: 0; right: 0;
+                height: 2px;
+                background: linear-gradient(90deg,
+                    transparent 0%,
+                    rgba(0,212,255,0.6) 30%,
+                    rgba(0,212,255,0.9) 50%,
+                    rgba(0,212,255,0.6) 70%,
+                    transparent 100%
+                );
+            }}
+            @keyframes diagramFadeIn {{
+                to {{ opacity: 1; transform: translateY(0); }}
+            }}
+            .diagram-title {{
+                font-family: 'JetBrains Mono', monospace;
+                font-size: 10px;
+                color: rgba(0,212,255,0.7);
+                letter-spacing: 0.2em;
+                text-transform: uppercase;
+                margin-bottom: 12px;
+            }}
+            #mermaid-container svg {{
+                filter:
+                    drop-shadow(0 4px 8px rgba(0,0,0,0.5))
+                    drop-shadow(0 0 20px rgba(0,212,255,0.08));
+                transition: filter 0.3s ease;
+                max-width: 100%;
+                height: auto;
+            }}
+            #mermaid-container svg:hover {{
+                filter:
+                    drop-shadow(0 8px 16px rgba(0,0,0,0.6))
+                    drop-shadow(0 0 30px rgba(0,212,255,0.15));
+            }}
+        </style>
+        </head>
+        <body>
+        <div class="diagram-wrapper">
+            {title_html}
+            <div id="mermaid-container">
+                <div class="mermaid">{escaped}</div>
+            </div>
+        </div>
+        <script type="module">
+            import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+            mermaid.initialize({{
+                startOnLoad: true,
+                look: 'neo',
+                theme: 'base',
+                fontFamily: 'JetBrains Mono, monospace',
+                fontSize: 13,
+                themeVariables: {{
+                    primaryColor:        '#1A3050',
+                    primaryBorderColor:  '#00D4FF',
+                    primaryTextColor:    '#E8F4FF',
+                    secondaryColor:      '#0D1E35',
+                    secondaryBorderColor:'#00A0C0',
+                    secondaryTextColor:  '#C0D8F0',
+                    tertiaryColor:       '#0A1628',
+                    tertiaryBorderColor: '#4A7090',
+                    lineColor:           '#00D4FF',
+                    textColor:           '#E8F4FF',
+                    mainBkg:             '#1A3050',
+                    clusterBkg:          '#0D1E35',
+                    edgeLabelBackground: '#0E1E3C',
+                    nodeBorder:          '#00D4FF',
+                    titleColor:          '#00D4FF',
+                    attributeBackgroundColorEven: '#0A1628',
+                    attributeBackgroundColorOdd:  '#0D1E35',
+                }},
+                flowchart: {{
+                    htmlLabels: true,
+                    curve: 'basis',
+                    padding: 20,
+                    nodeSpacing: 50,
+                    rankSpacing: 60,
+                    useMaxWidth: true,
+                }},
+                sequence: {{
+                    useMaxWidth: true,
+                    boxMargin: 10,
+                    mirrorActors: false,
+                    messageMargin: 40,
+                }},
+                classDiagram: {{ useMaxWidth: true }},
+            }});
+        </script>
+        </body>
+        </html>
+        """, height=420, scrolling=True)
 
 
 def render_confidence_badge(source_type: str = "model", has_rag: bool = False) -> None:
@@ -1000,11 +1124,21 @@ def render_image_explainer(student: dict, ollama_client) -> None:
                             else resp.message.content
                         )
                         st.session_state["vt_img_explanation"] = explanation
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Image analysis failed: {e}")
 
-            if "vt_img_explanation" in st.session_state:
-                st.markdown(st.session_state["vt_img_explanation"])
+        if "vt_img_explanation" in st.session_state:
+            st.markdown("""
+            <div style="background:rgba(0,212,255,0.05);
+                        border:1px solid rgba(0,212,255,0.15);
+                        border-radius:10px;padding:16px;margin-top:12px;">
+            """, unsafe_allow_html=True)
+            st.markdown(st.session_state["vt_img_explanation"])
+            st.markdown("</div>", unsafe_allow_html=True)
+            if st.button("🗑️ Clear", key="btn_clear_img"):
+                del st.session_state["vt_img_explanation"]
+                st.rerun()
     else:
         st.markdown("""
         <div style="text-align:center;padding:40px 20px;
@@ -1079,8 +1213,6 @@ def render_virtual_teacher_mode(student: dict, ollama_client, db, rag=None):
                 unsafe_allow_html=True
             )
             prog.progress(15)
-            import time as _t
-            _t.sleep(0.3)
             stat.markdown(
                 '<div style="color:#FFB800;font-family:Exo 2,sans-serif;'
                 'font-size:0.9rem;padding:12px;">⬡ Preparing your lesson on '
@@ -1095,7 +1227,6 @@ def render_virtual_teacher_mode(student: dict, ollama_client, db, rag=None):
                 'font-size:0.9rem;padding:12px;">✓ Lesson ready!</div>',
                 unsafe_allow_html=True
             )
-            _t.sleep(0.4)
             prog.progress(100)
             prog.empty()
             stat.empty()

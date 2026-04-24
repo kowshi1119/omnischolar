@@ -58,6 +58,7 @@ class OllamaClient:
         thinking:      bool = False,
         temperature:   float = 0.7,
         num_ctx:       int   = None,
+        num_predict:   int   = None,
     ) -> str:
         """
         Send a chat request and return the full response text.
@@ -69,7 +70,12 @@ class OllamaClient:
         api_messages.extend(messages)
 
         model = self._resolve_model()
-        options = {"num_ctx": num_ctx if num_ctx is not None else self.num_ctx, "temperature": temperature}
+        options = {
+            "num_ctx":     num_ctx if num_ctx is not None else self.num_ctx,
+            "temperature": temperature,
+            "num_predict": num_predict if num_predict is not None else int(os.getenv("OLLAMA_NUM_PREDICT", "512")),
+            "num_batch":   int(os.getenv("OLLAMA_NUM_BATCH", "512")),
+        }
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
@@ -103,6 +109,7 @@ class OllamaClient:
         system_prompt: str  = "",
         temperature:   float = 0.7,
         num_ctx:       int   = None,
+        num_predict:   int   = None,
     ) -> Iterator[str]:
         """Stream chat tokens. Yields string chunks."""
         api_messages = []
@@ -111,7 +118,12 @@ class OllamaClient:
         api_messages.extend(messages)
 
         model = self._resolve_model()
-        options = {"num_ctx": num_ctx if num_ctx is not None else self.num_ctx, "temperature": temperature}
+        options = {
+            "num_ctx":     num_ctx if num_ctx is not None else self.num_ctx,
+            "temperature": temperature,
+            "num_predict": num_predict if num_predict is not None else int(os.getenv("OLLAMA_NUM_PREDICT", "512")),
+            "num_batch":   int(os.getenv("OLLAMA_NUM_BATCH", "512")),
+        }
 
         try:
             for chunk in self._client.chat(

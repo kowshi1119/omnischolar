@@ -19,8 +19,11 @@ OLLAMA_HOST        = os.getenv("OLLAMA_HOST",        "http://localhost:11434")
 OLLAMA_MODEL       = os.getenv("OLLAMA_MODEL",       "gemma4:e4b")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 OLLAMA_TIMEOUT     = int(os.getenv("OLLAMA_TIMEOUT", "120"))
-OLLAMA_NUM_CTX     = int(os.getenv("OLLAMA_NUM_CTX", "4096"))
-OLLAMA_NUM_PARALLEL = int(os.getenv("OLLAMA_NUM_PARALLEL", "1"))
+OLLAMA_NUM_CTX          = int(os.getenv("OLLAMA_NUM_CTX",          "2048"))
+OLLAMA_NUM_PREDICT      = int(os.getenv("OLLAMA_NUM_PREDICT",      "512"))
+OLLAMA_NUM_BATCH        = int(os.getenv("OLLAMA_NUM_BATCH",        "512"))
+OLLAMA_NUM_PARALLEL     = int(os.getenv("OLLAMA_NUM_PARALLEL",     "1"))
+OLLAMA_MAX_LOADED_MODELS = int(os.getenv("OLLAMA_MAX_LOADED_MODELS", "1"))
 
 # ── ChromaDB ───────────────────────────────────────────────────────────────────
 CHROMA_DB_PATH          = os.getenv("CHROMA_DB_PATH",          "./study_db")

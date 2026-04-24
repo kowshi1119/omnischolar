@@ -355,6 +355,25 @@ class Database:
                 lesson_json TEXT NOT NULL,
                 created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS tutor_quality_logs (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id       TEXT NOT NULL,
+                topic            TEXT,
+                harm_flags       TEXT,
+                scaffolding_score REAL DEFAULT 0.0,
+                grounding_score  REAL DEFAULT 0.0,
+                overall_quality  TEXT,
+                session_date     DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS telemetry_events (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type TEXT NOT NULL,
+                value_ms   REAL DEFAULT 0.0,
+                metadata   TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         conn.commit()
         conn.close()
@@ -706,4 +725,52 @@ class Database:
             "topics": topics,
             "most_struggling_topic": most_struggling_topic,
         }
+
+    def log_tutor_quality(
+        self,
+        student_id: str,
+        topic: str,
+        harm_flags: list,
+        scaffolding_score: float,
+        grounding_score: float,
+        overall_quality: str,
+    ) -> None:
+        """Log a tutor response quality evaluation result."""
+        import json as _json
+        conn = self._conn()
+        try:
+            conn.execute(
+                """INSERT INTO tutor_quality_logs
+                   (student_id, topic, harm_flags, scaffolding_score, grounding_score, overall_quality)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    student_id,
+                    topic,
+                    _json.dumps(harm_flags),
+                    scaffolding_score,
+                    grounding_score,
+                    overall_quality,
+                ),
+            )
+            conn.commit()
+        except Exception:
+            pass
+        finally:
+            conn.close()
+
+    def log_telemetry_event(
+        self, event_type: str, value_ms: float = 0.0, metadata: str = ""
+    ) -> None:
+        """Log a latency / usage telemetry event."""
+        conn = self._conn()
+        try:
+            conn.execute(
+                "INSERT INTO telemetry_events (event_type, value_ms, metadata) VALUES (?, ?, ?)",
+                (event_type, value_ms, metadata),
+            )
+            conn.commit()
+        except Exception:
+            pass
+        finally:
+            conn.close()
 
