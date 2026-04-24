@@ -808,3 +808,8 @@ def render_3a_achievement_mode(student: dict, db, llm):
         _render_curriculum_alignment(student, db, llm)
     with tab5:
         _render_3a_dashboard(student, db, llm)
+
+
+def render_achievement_mode(student: dict, db, llm):
+    """Backward-compatible alias for existing achievement mode imports."""
+    render_3a_achievement_mode(student, db, llm)

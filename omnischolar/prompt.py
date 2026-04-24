@@ -279,30 +279,39 @@ Return ONLY valid JSON, zero text outside it:
 
 # ── Virtual Teacher Enhanced Prompts ─────────────────────────────────────────
 
-VIRTUAL_TEACHER_DIAGRAM_PROMPT = """You are generating a Mermaid diagram for a lesson on: {topic}
+VIRTUAL_TEACHER_DIAGRAM_PROMPT = """Generate a Mermaid diagram for: {topic}
 Subject: {subject}
 
-Create a Mermaid diagram that visually explains the key concept or process.
+Choose the BEST diagram type for this concept:
+- flowchart TD  -> algorithms, processes, decision flows
+- classDiagram  -> OOP, data structures, relationships
+- sequenceDiagram -> OS interactions, network protocols, step sequences
+- stateDiagram-v2 -> state machines, process states (CPU states, TCP states)
+- graph LR      -> simple concept maps, hierarchies
 
-Choose the most appropriate diagram type:
-- flowchart TD  → for processes, algorithms, flows
-- graph LR      → for relationships, hierarchies
-- sequenceDiagram → for step-by-step interactions
-- classDiagram   → for OOP, data structures
-- stateDiagram-v2 → for state machines, OS concepts
+QUALITY RULES:
+- Use SPECIFIC names not generic labels (NOT "Node1" -> USE "BankAccount")
+- Add style lines to make important nodes stand out
+- For algorithms: show the DATA not abstract symbols (use [5,3,8,1,9] not [arr])
+- Maximum 8 nodes for clarity
+- Every arrow must have a meaningful label
 
-Return ONLY the raw Mermaid code. No markdown fences. No explanation. Just the diagram.
+STYLE ALL NODES with dark theme:
+  style NodeName fill:#1A3050,stroke:#00D4FF,color:#E8F4FF,stroke-width:2px
 
-Example for deadlock:
-flowchart TD
-    P1[Process 1] -->|holds| R1[Resource A]
-    P1 -->|waiting for| R2[Resource B]
-    P2[Process 2] -->|holds| R2
-    P2 -->|waiting for| R1
-    style P1 fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
-    style P2 fill:#1A2540,stroke:#FFB800,color:#E8F0FF
-    style R1 fill:#0D1B35,stroke:#00C850,color:#E8F0FF
-    style R2 fill:#0D1B35,stroke:#EF4444,color:#E8F0FF
+Return ONLY raw Mermaid code. No fences. No explanation.
+
+Example for Binary Search Tree:
+graph TD
+    N5[5 ROOT] --> N3[3]
+    N5 --> N7[7]
+    N3 --> N1[1]
+    N3 --> N4[4]
+    style N5 fill:#1A3050,stroke:#00D4FF,color:#E8F4FF,stroke-width:3px
+    style N3 fill:#0D1E35,stroke:#00A0C0,color:#C0D8F0,stroke-width:2px
+    style N7 fill:#0D1E35,stroke:#00A0C0,color:#C0D8F0,stroke-width:2px
+    style N1 fill:#0A1628,stroke:#4A7090,color:#8AAAC0,stroke-width:1px
+    style N4 fill:#0A1628,stroke:#4A7090,color:#8AAAC0,stroke-width:1px
 """
 
 VIRTUAL_TEACHER_MID_QUESTION_PROMPT = """You are Dr. Omni mid-lesson.

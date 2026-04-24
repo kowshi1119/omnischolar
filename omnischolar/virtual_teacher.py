@@ -732,35 +732,146 @@ def render_avatar_teacher(text: str = "", phase: str = "greeting",
 # ── Mermaid diagram renderer ─────────────────────────────────────────────────
 
 def render_mermaid_diagram(mermaid_code: str, title: str = "") -> None:
-    """Render a Mermaid diagram inline using CDN (works offline after first load)."""
-    if not mermaid_code or not mermaid_code.strip():
-        return
-    title_html = ('<div style="font-size:0.65rem;color:#00D4FF;letter-spacing:0.15em;text-transform:uppercase;margin-bottom:10px;">📊 ' + title + '</div>') if title else ''
-    components.html(f"""
-    <div style="background:#0A0F1E;border:1px solid rgba(0,212,255,0.2);
-                border-radius:12px;padding:16px;margin:8px 0;">
-      {title_html}
-      <div class="mermaid" style="background:transparent;">
-{mermaid_code}
-      </div>
-    </div>
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
-    <script>
-      mermaid.initialize({{
-        startOnLoad: true,
-        theme: 'dark',
-        themeVariables: {{
-          primaryColor: '#1A2540',
-          primaryTextColor: '#E8F0FF',
-          primaryBorderColor: '#00D4FF',
-          lineColor: '#00D4FF',
-          secondaryColor: '#0D1B35',
-          tertiaryColor: '#111929',
-          background: '#0A0F1E',
-        }}
-      }});
-    </script>
-    """, height=320)
+        """
+        Premium Mermaid diagram with:
+        - Mermaid v11 'neo' look (automatic shadows, modern rounding)
+        - Dark navy theme matching OmniScholar brand
+        - CSS 3D depth effect via layered drop-shadow
+        - Fade-in animation on load
+        """
+        if not mermaid_code or not mermaid_code.strip():
+                return
+
+        code = mermaid_code.strip()
+        for fence in ["```mermaid", "```", "~~~"]:
+                code = code.replace(fence, "").strip()
+
+        escaped = (
+                code
+                .replace("\\", "\\\\")
+                .replace("`", "\\`")
+                .replace("$", "\\$")
+        )
+
+        title_html = f'<div class="diagram-title">📊 {title}</div>' if title else ""
+
+        components.html(f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <style>
+            body {{ background: transparent; margin: 0; padding: 0; }}
+            .diagram-wrapper {{
+                background: linear-gradient(145deg, #0A1628, #0E1E3C);
+                border: 1px solid rgba(0,212,255,0.2);
+                border-radius: 12px;
+                padding: 20px;
+                margin: 8px 0;
+                position: relative;
+                overflow: hidden;
+                box-shadow:
+                    0 4px 6px rgba(0,0,0,0.4),
+                    0 8px 15px rgba(0,0,0,0.3),
+                    0 20px 40px rgba(0,0,0,0.25),
+                    0 0 0 1px rgba(0,212,255,0.05),
+                    inset 0 1px 0 rgba(255,255,255,0.06);
+                animation: diagramFadeIn 0.6s cubic-bezier(0.16,1,0.3,1) forwards;
+                opacity: 0;
+                transform: translateY(8px);
+            }}
+            .diagram-wrapper::before {{
+                content: '';
+                position: absolute;
+                top: 0; left: 0; right: 0;
+                height: 2px;
+                background: linear-gradient(90deg,
+                    transparent 0%,
+                    rgba(0,212,255,0.6) 30%,
+                    rgba(0,212,255,0.9) 50%,
+                    rgba(0,212,255,0.6) 70%,
+                    transparent 100%
+                );
+            }}
+            @keyframes diagramFadeIn {{
+                to {{ opacity: 1; transform: translateY(0); }}
+            }}
+            .diagram-title {{
+                font-family: 'JetBrains Mono', monospace;
+                font-size: 10px;
+                color: rgba(0,212,255,0.7);
+                letter-spacing: 0.2em;
+                text-transform: uppercase;
+                margin-bottom: 12px;
+            }}
+            #mermaid-container svg {{
+                filter:
+                    drop-shadow(0 4px 8px rgba(0,0,0,0.5))
+                    drop-shadow(0 0 20px rgba(0,212,255,0.08));
+                transition: filter 0.3s ease;
+                max-width: 100%;
+                height: auto;
+            }}
+            #mermaid-container svg:hover {{
+                filter:
+                    drop-shadow(0 8px 16px rgba(0,0,0,0.6))
+                    drop-shadow(0 0 30px rgba(0,212,255,0.15));
+            }}
+        </style>
+        </head>
+        <body>
+        <div class="diagram-wrapper">
+            {title_html}
+            <div id="mermaid-container">
+                <div class="mermaid">{escaped}</div>
+            </div>
+        </div>
+        <script type="module">
+            import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+            mermaid.initialize({{
+                startOnLoad: true,
+                look: 'neo',
+                theme: 'base',
+                fontFamily: 'JetBrains Mono, monospace',
+                fontSize: 13,
+                themeVariables: {{
+                    primaryColor:        '#1A3050',
+                    primaryBorderColor:  '#00D4FF',
+                    primaryTextColor:    '#E8F4FF',
+                    secondaryColor:      '#0D1E35',
+                    secondaryBorderColor:'#00A0C0',
+                    secondaryTextColor:  '#C0D8F0',
+                    tertiaryColor:       '#0A1628',
+                    tertiaryBorderColor: '#4A7090',
+                    lineColor:           '#00D4FF',
+                    textColor:           '#E8F4FF',
+                    mainBkg:             '#1A3050',
+                    clusterBkg:          '#0D1E35',
+                    edgeLabelBackground: '#0E1E3C',
+                    nodeBorder:          '#00D4FF',
+                    titleColor:          '#00D4FF',
+                    attributeBackgroundColorEven: '#0A1628',
+                    attributeBackgroundColorOdd:  '#0D1E35',
+                }},
+                flowchart: {{
+                    htmlLabels: true,
+                    curve: 'basis',
+                    padding: 20,
+                    nodeSpacing: 50,
+                    rankSpacing: 60,
+                    useMaxWidth: true,
+                }},
+                sequence: {{
+                    useMaxWidth: true,
+                    boxMargin: 10,
+                    mirrorActors: false,
+                    messageMargin: 40,
+                }},
+                classDiagram: {{ useMaxWidth: true }},
+            }});
+        </script>
+        </body>
+        </html>
+        """, height=420, scrolling=True)
 
 
 def render_confidence_badge(source_type: str = "model", has_rag: bool = False) -> None:
@@ -1013,11 +1124,21 @@ def render_image_explainer(student: dict, ollama_client) -> None:
                             else resp.message.content
                         )
                         st.session_state["vt_img_explanation"] = explanation
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Image analysis failed: {e}")
 
-            if "vt_img_explanation" in st.session_state:
-                st.markdown(st.session_state["vt_img_explanation"])
+        if "vt_img_explanation" in st.session_state:
+            st.markdown("""
+            <div style="background:rgba(0,212,255,0.05);
+                        border:1px solid rgba(0,212,255,0.15);
+                        border-radius:10px;padding:16px;margin-top:12px;">
+            """, unsafe_allow_html=True)
+            st.markdown(st.session_state["vt_img_explanation"])
+            st.markdown("</div>", unsafe_allow_html=True)
+            if st.button("🗑️ Clear", key="btn_clear_img"):
+                del st.session_state["vt_img_explanation"]
+                st.rerun()
     else:
         st.markdown("""
         <div style="text-align:center;padding:40px 20px;

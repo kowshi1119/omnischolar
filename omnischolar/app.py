@@ -261,15 +261,10 @@ def _render_sidebar():
         st.divider()
         _render_system_status()
         st.markdown("**Learning Mode**")
-        _is_al = st.session_state.get("student_type", "Undergraduate") == "A/L Student"
         _cur_mode = st.session_state["mode"]
-        # If THREE_A was active but student switched to Undergraduate, fall back to LEARN
-        if _cur_mode == "THREE_A" and not _is_al:
-            _cur_mode = "LEARN"
-            st.session_state["mode"] = _cur_mode
 
         # ── Primary modes — always visible ────────────────────────────────
-        _prim = [m for m in _PRIMARY_MODES if m[1] != "THREE_A" or _is_al]
+        _prim = _PRIMARY_MODES
         _prim_labels = [m[0] for m in _prim]
         _prim_values = [m[1] for m in _prim]
         _in_primary = _cur_mode in _prim_values
@@ -299,6 +294,12 @@ def _render_sidebar():
             st.session_state["mode"] = _new_mode
             st.session_state["chat_history"] = []
             st.rerun()
+
+        st.sidebar.markdown("---")
+        if st.sidebar.button("🏆 View My Exam Readiness", use_container_width=True):
+            st.session_state["mode"] = "THREE_A"
+            st.rerun()
+
         st.divider()
         st.sidebar.markdown(
             f'<div style="text-align:center;padding:6px;">'
@@ -588,10 +589,7 @@ def main():
         elif mode == "STUDY_PLAN":
             render_study_plan_mode(student, db, _llm)
         elif mode == "THREE_A":
-            if student.get("student_type") == "A/L Student":
-                render_3a_achievement_mode(student, db, _llm)
-            else:
-                st.warning("The 3A Achievement module is available for A/L students only. Update your profile to A/L Student in the sidebar.")
+            render_3a_achievement_mode(student, db, _llm)
         elif mode == "PAST_PAPER":
             render_past_paper_mode(student, db, _llm)
         elif mode == "ADVANCED_STUDY_PLAN":
