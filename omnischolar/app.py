@@ -19,7 +19,7 @@ st.set_page_config(
 from config import OLLAMA_MODEL
 from database import Database, init_db, save_student, get_quiz_history
 from ollama_client import OllamaClient
-from rag import ingest_pdf, retrieve_context, get_retrieval_coverage
+from rag import ingest_pdf, retrieve_context, retrieve_context_hybrid, get_confidence_score, get_retrieval_coverage
 from prompt import SYSTEM_PROMPT
 from ui_components import (
     inject_premium_css,
@@ -36,6 +36,7 @@ from ui_components import (
     COLORS,
 )
 from achievement import render_achievement_mode
+from achievement_3a import render_3a_achievement_mode, calculate_readiness
 from past_paper import render_past_paper_mode
 from study_plan import render_study_plan_mode, get_todays_topic, build_schedule
 from teacher import render_teacher_mode
@@ -67,21 +68,29 @@ if "_llm" not in st.session_state:
     st.session_state["_llm"] = OllamaClient()
 _llm = st.session_state["_llm"]
 
-# All modes — THREE_A is filtered out for non-A/L students in the sidebar
-MODES = [
-    ("📚 Learn", "LEARN"),
-    ("🔄 Revise", "REVISE"),
-    ("🧪 Test Me", "TEST_ME"),
-    ("🔍 Find Weak Areas", "FIND_WEAK_AREAS"),
-    ("📅 Study Plan", "STUDY_PLAN"),
-    ("🏆 3A Achievement", "THREE_A"),          # A/L only — filtered in sidebar
-    ("📝 Past Paper Battle", "PAST_PAPER"),
-    ("🗓️ Advanced Study Plan", "ADVANCED_STUDY_PLAN"),
-    ("👩‍🏫 Teacher Mode", "TEACHER"),
-    ("⚠️ Weakness Analysis", "WEAKNESS"),
+# Primary navigation — always visible in sidebar
+_PRIMARY_MODES = [
+    ("📖 Learn",           "LEARN"),
+    ("🔄 Revise",          "REVISE"),
+    ("📝 Test Me",         "TEST_ME"),
     ("🤖 Virtual Teacher", "VIRTUAL_TEACHER"),
-    ("⚔️ CS Battle", "BATTLE_GAME"),
+    ("📊 My Progress",     "THREE_A"),       # A/L only — filtered in sidebar
 ]
+
+# Secondary — under "⋯ More" expander
+_SECONDARY_MODES = [
+    ("🔍 Find Weak Areas",    "FIND_WEAK_AREAS"),
+    ("📅 Study Plan",         "STUDY_PLAN"),
+    ("📄 Past Paper Battle",  "PAST_PAPER"),
+    ("⚔️ CS Battle",         "BATTLE_GAME"),
+    ("👩‍🏫 Teacher Mode",    "TEACHER"),
+    ("⚠️ Weakness Analysis", "WEAKNESS"),
+    ("🗓️ Advanced Study Plan","ADVANCED_STUDY_PLAN"),
+    ("🏆 3A Achievement",     "THREE_A"),    # Also reachable from primary when A/L
+]
+
+# Combined for all internal dispatch / delegated lookup
+MODES = _PRIMARY_MODES + [m for m in _SECONDARY_MODES if m[1] != "THREE_A"]
 
 _DELEGATED = {
     "THREE_A", "PAST_PAPER", "ADVANCED_STUDY_PLAN", "TEACHER",
@@ -253,17 +262,39 @@ def _render_sidebar():
         _render_system_status()
         st.markdown("**Learning Mode**")
         _is_al = st.session_state.get("student_type", "Undergraduate") == "A/L Student"
-        _visible_modes = [m for m in MODES if m[1] != "THREE_A" or _is_al]
-        mode_labels = [m[0] for m in _visible_modes]
-        mode_values = [m[1] for m in _visible_modes]
         _cur_mode = st.session_state["mode"]
         # If THREE_A was active but student switched to Undergraduate, fall back to LEARN
         if _cur_mode == "THREE_A" and not _is_al:
             _cur_mode = "LEARN"
             st.session_state["mode"] = _cur_mode
-        _cur_idx = mode_values.index(_cur_mode) if _cur_mode in mode_values else 0
-        _sel = st.radio("Select Mode", mode_labels, index=_cur_idx, key="_sb_mode", label_visibility="collapsed")
-        _new_mode = mode_values[mode_labels.index(_sel)]
+
+        # ── Primary modes — always visible ────────────────────────────────
+        _prim = [m for m in _PRIMARY_MODES if m[1] != "THREE_A" or _is_al]
+        _prim_labels = [m[0] for m in _prim]
+        _prim_values = [m[1] for m in _prim]
+        _in_primary = _cur_mode in _prim_values
+        _prim_idx = _prim_values.index(_cur_mode) if _in_primary else 0
+        _sel_prim = st.radio("Mode", _prim_labels, index=_prim_idx,
+                             key="_sb_mode_primary", label_visibility="collapsed")
+        _new_mode_prim = _prim_values[_prim_labels.index(_sel_prim)]
+
+        # ── Secondary modes — collapsed expander ──────────────────────────
+        _new_mode_sec = None
+        with st.expander("⋯ More modes", expanded=not _in_primary):
+            _sec = [m for m in _SECONDARY_MODES if m[1] != "THREE_A"]
+            _sec_labels = [m[0] for m in _sec]
+            _sec_values = [m[1] for m in _sec]
+            _sec_idx = _sec_values.index(_cur_mode) if _cur_mode in _sec_values else 0
+            _sel_sec = st.radio("More", _sec_labels, index=_sec_idx,
+                                key="_sb_mode_secondary", label_visibility="collapsed")
+            _new_mode_sec = _sec_values[_sec_labels.index(_sel_sec)]
+
+        # Determine active mode: secondary selection wins when user is in expander
+        _new_mode = _new_mode_sec if not _in_primary else _new_mode_prim
+        # If primary radio changed, use that
+        if _new_mode_prim != _cur_mode and _new_mode_prim in _prim_values:
+            _new_mode = _new_mode_prim
+
         if _new_mode != st.session_state["mode"]:
             st.session_state["mode"] = _new_mode
             st.session_state["chat_history"] = []
@@ -341,15 +372,17 @@ def _handle_chat_mode(mode, student):
             st.markdown(prompt)
 
         rag_context = ""
+        rag_sources = []
         if st.session_state.get("rag_docs"):
             with st.spinner("Searching study materials..."):
                 try:
                     # For A/L students, filter RAG by the active subject in their stream
                     _al_subjects = student.get("al_subjects") or []
                     _rag_subject = _al_subjects[0] if _al_subjects else student["subject"]
-                    rag_context, _ = retrieve_context(prompt, subject=_rag_subject)
+                    rag_context, rag_sources = retrieve_context_hybrid(prompt, subject=_rag_subject)
                 except Exception:
                     rag_context = ""
+                    rag_sources = []
 
         sys_prompt = _build_system_prompt(student, rag_context)
         messages = [{"role": "system", "content": sys_prompt}]
@@ -371,7 +404,8 @@ def _handle_chat_mode(mode, student):
                 placeholder.markdown(full_response)
 
             if rag_context:
-                render_grounding_indicator()
+                _conf = get_confidence_score(prompt, full_response, rag_sources)
+                render_grounding_indicator(sources=rag_sources, level=_conf)
 
         st.session_state["chat_history"].append({"role": "assistant", "content": full_response})
 
@@ -446,6 +480,16 @@ def _render_dashboard(student):
         chapter_data = []
     scores = [c["score"] for c in chapter_data] if chapter_data else []
     overall = round(sum(scores) / len(scores), 1) if scores else 50.0
+    # Upgrade to Elo-based readiness for A/L students
+    _is_al_student = st.session_state.get("student_type", "Undergraduate") == "A/L Student"
+    if _is_al_student:
+        try:
+            _qh = db.get_quiz_history(student["student_id"])
+            _subj = student.get("subject", "ICT")
+            _elo_result = calculate_readiness(_qh, _subj)
+            overall = float(_elo_result["readiness_pct"])
+        except Exception:
+            pass  # fall back to chapter-score average
     try:
         streak = db.get_study_streak(student["student_id"])
     except Exception:

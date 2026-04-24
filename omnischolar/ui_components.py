@@ -561,35 +561,35 @@ def inject_premium_css():
 # ── RAG grounding indicator ────────────────────────────────────────────────────
 
 def render_grounding_indicator(sources: list | None = None,
-                                coverage: float | None = None) -> None:
+                                coverage: float | None = None,
+                                level: str | None = None) -> None:
     """
-    3-band confidence indicator — natural language only, no percentages.
-    Research: Thomas et al. 2024 — plain language bands raise trust 58%.
+    3-band confidence indicator.
+    level: 'grounded' | 'curriculum' | 'uncertain'  (overrides coverage calculation)
     """
     if sources is None:
         sources = []
     n = len(sources)
 
-    if coverage is not None:
-        pct = coverage * 100
+    if level == "grounded":
+        color, icon, label, sub = "#00C850", "🟢", "From your notes", "Grounded in your uploaded materials"
+    elif level == "uncertain":
+        color, icon, label, sub = "#EF4444", "🔴", "Uncertain", "Check textbook — not confirmed in your notes"
+    elif level == "curriculum":
+        color, icon, label, sub = "#FFB800", "🟡", "Curriculum knowledge", "Verify key facts with your textbook"
     else:
-        pct = min(100, n * 25)
+        # Legacy path: infer from coverage / source count
+        if coverage is not None:
+            pct = coverage * 100
+        else:
+            pct = min(100, n * 25)
 
-    if pct >= 60 or n >= 3:
-        color, icon, label, sub = (
-            "#00C850", "●", "From your notes",
-            "Grounded in your uploaded materials"
-        )
-    elif pct >= 20 or n >= 1:
-        color, icon, label, sub = (
-            "#FFB800", "◑", "Curriculum knowledge",
-            "Verify key facts with your textbook"
-        )
-    else:
-        color, icon, label, sub = (
-            "#4A6080", "○", "General knowledge",
-            "Upload your textbook to improve accuracy"
-        )
+        if pct >= 60 or n >= 3:
+            color, icon, label, sub = "#00C850", "🟢", "From your notes", "Grounded in your uploaded materials"
+        elif pct >= 20 or n >= 1:
+            color, icon, label, sub = "#FFB800", "🟡", "Curriculum knowledge", "Verify key facts with your textbook"
+        else:
+            color, icon, label, sub = "#4A6080", "○", "General knowledge", "Upload your textbook to improve accuracy"
 
     source_text = ""
     if sources:

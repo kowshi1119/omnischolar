@@ -24,12 +24,10 @@ import streamlit.components.v1 as components
 from prompt import (
     VIRTUAL_TEACHER_PROMPT,
     VIRTUAL_TEACHER_EVAL_PROMPT,
-    VIRTUAL_TEACHER_DIAGRAM_PROMPT,
-    VIRTUAL_TEACHER_MID_QUESTION_PROMPT,
     VIRTUAL_TEACHER_SOCRATIC_FOLLOWUP,
     VIRTUAL_TEACHER_RECAP_PROMPT,
 )
-from rag import retrieve_context
+from rag import retrieve_context, retrieve_context_hybrid
 
 
 # ── Lesson memory across topics in session ────────────────────────────────────
@@ -58,25 +56,66 @@ class VirtualTeacher:
 
     def teach(self, topic: str, subject: str, student_id: str,
               language: str) -> dict:
-        """Generate full lesson dict. RAG-grounded. Returns rich lesson object."""
+        """Single call returns lesson + diagram spec + mid-question together."""
         try:
-            rag_context, sources = retrieve_context(topic, subject, n_results=3)
+            rag_context, sources = retrieve_context_hybrid(topic, subject, n_results=3)
         except Exception:
             rag_context, sources = "", []
 
-        prompt = VIRTUAL_TEACHER_PROMPT.format(
-            subject=subject, name="the student",
-            language=language, topic=topic,
-            rag_context=rag_context or "No uploaded materials for this topic.",
+        # ONE COMBINED PROMPT — returns all components in one model call
+        combined_prompt = (
+            "You are Dr. Omni teaching {topic} in {subject}.\n"
+            "Student language: {language}\n\n"
+            "Study materials:\n"
+            "{rag_context}\n\n"
+            "Return ONLY this JSON (no text outside it):\n"
+            "{{\n"
+            "  \"hook\": \"2-3 sentences. Real-world analogy from Sri Lankan daily life. In {language}.\",\n"
+            "  \"explanation\": \"150 words max. Definition \u2192 mechanism \u2192 complexity (if CS) \u2192 Sri Lankan example \u2192 exam trap. In {language}.\",\n"
+            "  \"worked_example\": \"Step-by-step trace with ACTUAL VALUES, not placeholders. Every step annotated. In {language}.\",\n"
+            "  \"exam_hook\": [\n"
+            "    \"Examiner Q1: Define/State \u2014 In {language}.\",\n"
+            "    \"Examiner Q2: Compare/Distinguish \u2014 In {language}.\",\n"
+            "    \"Examiner Q3: Apply/Trace \u2014 In {language}.\"\n"
+            "  ],\n"
+            "  \"check_questions\": [\n"
+            "    {{\"question\": \"Recall question in {language}.\", \"expected_key_points\": \"2-3 specific technical points\"}},\n"
+            "    {{\"question\": \"Application scenario question in {language}.\", \"expected_key_points\": \"specific steps expected\"}}\n"
+            "  ],\n"
+            "  \"diagram_spec\": {{\n"
+            "    \"type\": \"flowchart TD or classDiagram or sequenceDiagram or stateDiagram-v2\",\n"
+            "    \"mermaid_code\": \"Complete valid Mermaid code. Dark theme. Named nodes not generic labels.\",\n"
+            "    \"title\": \"Visual: {topic}\"\n"
+            "  }},\n"
+            "  \"mid_question\": {{\n"
+            "    \"question\": \"Quick check \u2014 one probe question testing core mechanism. In {language}.\",\n"
+            "    \"expected\": \"2-3 specific points the answer must contain\",\n"
+            "    \"hint\": \"One directional hint without giving the answer. In {language}.\"\n"
+            "  }}\n"
+            "}}"
+        ).format(
+            topic=topic,
+            subject=subject,
+            language=language,
+            rag_context=rag_context or "No materials uploaded \u2014 use curriculum knowledge.",
         )
 
         try:
-            raw = self.client.chat(
-                messages=[{"role": "user", "content": prompt}],
-                system_prompt="",
-                temperature=0.9,
-                num_ctx=4096,
-            )
+            from telemetry import timed as _timed
+            _ctx = _timed("teach_latency", metadata=f"topic={topic[:30]}")
+        except Exception:
+            from contextlib import nullcontext
+            _ctx = nullcontext()
+
+        try:
+            with _ctx:
+                raw = self.client.chat(
+                    messages=[{"role": "user", "content": combined_prompt}],
+                    system_prompt="",
+                    temperature=0.9,
+                    num_ctx=3072,
+                    num_predict=1024,
+                )
         except Exception as exc:
             raw = json.dumps({
                 "hook": f"Let's explore {topic} together.",
@@ -91,6 +130,16 @@ class VirtualTeacher:
                     {"question": f"What is {topic}?",
                      "expected_key_points": "basic understanding"},
                 ],
+                "diagram_spec": {
+                    "mermaid_code": f"flowchart TD\n    A[{topic}] --> B[Key Concept]\n    style A fill:#1A2540,stroke:#00D4FF,color:#E8F0FF",
+                    "type": "flowchart TD",
+                    "title": f"Visual: {topic}",
+                },
+                "mid_question": {
+                    "question": f"Quick check \u2014 what is {topic} in one sentence?",
+                    "expected": "basic definition",
+                    "hint": f"Focus on what {topic} does and why it matters.",
+                },
             })
 
         lesson = self._parse_lesson(raw, topic)
@@ -99,68 +148,11 @@ class VirtualTeacher:
         lesson["_subject"] = subject
         lesson["_language"] = language
 
-        lesson["_diagram"] = self.generate_diagram(topic, subject)
-
-        lesson["_mid_question"] = self.generate_mid_question(
-            topic, subject,
-            just_explained=lesson.get("explanation", "")[:300],
-            name="the student",
-            language=language,
-        )
+        # Extract diagram and mid-question from combined response
+        lesson["_diagram"] = lesson.pop("diagram_spec", {}).get("mermaid_code", "")
+        lesson["_mid_question"] = lesson.pop("mid_question", {})
 
         return lesson
-
-    # ── Diagram generation ────────────────────────────────────────────────────
-
-    def generate_diagram(self, topic: str, subject: str) -> str:
-        """Generate Mermaid diagram code for the topic. Returns raw mermaid string."""
-        prompt = VIRTUAL_TEACHER_DIAGRAM_PROMPT.format(
-            topic=topic, subject=subject
-        )
-        try:
-            raw = self.client.fast_chat(
-                message=prompt,
-                system="Return ONLY Mermaid diagram code. No markdown fences. No explanation.",
-                max_tokens=500,
-            )
-            raw = raw.strip()
-            for fence in ["```mermaid", "```", "~~~"]:
-                raw = raw.replace(fence, "").strip()
-            return raw
-        except Exception:
-            return f"""flowchart TD
-    A[{topic}] --> B[Key Concept 1]
-    A --> C[Key Concept 2]
-    A --> D[Key Concept 3]
-    B --> E[Application]
-    C --> E
-    style A fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
-    style E fill:#0D1B35,stroke:#00C850,color:#E8F0FF"""
-
-    # ── Mid-lesson question generation ───────────────────────────────────────
-
-    def generate_mid_question(self, topic: str, subject: str,
-                              just_explained: str, name: str,
-                              language: str = "english") -> dict:
-        """Generate a single sharp mid-lesson check question."""
-        prompt = VIRTUAL_TEACHER_MID_QUESTION_PROMPT.format(
-            topic=topic, subject=subject,
-            just_explained=just_explained, language=language,
-        )
-        try:
-            raw = self.client.fast_chat(
-                message=prompt,
-                system="Return ONLY valid JSON. No markdown. Be conversational.",
-                max_tokens=250,
-            )
-            raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-            return json.loads(raw)
-        except Exception:
-            return {
-                "question": f"Quick check — can you explain {topic} in one sentence?",
-                "expected": "basic definition in own words",
-                "hint": f"Think about what {topic} does and why it matters.",
-            }
 
     # ── Socratic follow-up ────────────────────────────────────────────────────
 
@@ -254,6 +246,27 @@ class VirtualTeacher:
                 )
             except Exception:
                 pass
+
+        # ── Safety eval + telemetry ─────────────────────────────────────
+        try:
+            from tutor_eval import score_tutor_response
+            from telemetry import log_event
+            eval_result = score_tutor_response(student_answer, feedback)
+            if self.db:
+                self.db.log_tutor_quality(
+                    student_id=student_id,
+                    topic=topic,
+                    harm_flags=eval_result["harm_flags"],
+                    scaffolding_score=eval_result["scaffolding_score"],
+                    grounding_score=eval_result["grounding_score"],
+                    overall_quality=eval_result["overall_quality"],
+                )
+            log_event("tutor_eval", metadata=f"quality={eval_result['overall_quality']}")
+            # Expose for sidebar quality badge
+            import streamlit as _st
+            _st.session_state["_last_tutor_quality"] = eval_result
+        except Exception:
+            pass
 
         return {"correct": correct, "feedback": feedback, "weakness": weakness}
 
@@ -1079,8 +1092,6 @@ def render_virtual_teacher_mode(student: dict, ollama_client, db, rag=None):
                 unsafe_allow_html=True
             )
             prog.progress(15)
-            import time as _t
-            _t.sleep(0.3)
             stat.markdown(
                 '<div style="color:#FFB800;font-family:Exo 2,sans-serif;'
                 'font-size:0.9rem;padding:12px;">⬡ Preparing your lesson on '
@@ -1095,7 +1106,6 @@ def render_virtual_teacher_mode(student: dict, ollama_client, db, rag=None):
                 'font-size:0.9rem;padding:12px;">✓ Lesson ready!</div>',
                 unsafe_allow_html=True
             )
-            _t.sleep(0.4)
             prog.progress(100)
             prog.empty()
             stat.empty()
