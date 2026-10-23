@@ -49,3 +49,14 @@ Thumbs.db
 .vscode/
 .idea/
 .claude/
+
+# ── Local model-download scratch scripts & Modelfile experiments ──────────────
+/dl*.py
+/debug_download.py
+/download_adapters.py
+/download_gguf2.py
+/download_gguf_final.py
+/get_e2b_v2.py
+Modelfile.v*
+Modelfile.e2b_v2
+unsloth_compiled_cache/
