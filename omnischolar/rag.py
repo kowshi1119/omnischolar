@@ -1,18 +1,22 @@
 import hashlib
 import os
+import re
 
 import chromadb
 import fitz
 import ollama
 
-from config import CHROMA_DB_PATH, OLLAMA_HOST
+from config import CHROMA_DB_PATH, OLLAMA_EMBED_MODEL, OLLAMA_HOST
 
 client = chromadb.PersistentClient(CHROMA_DB_PATH)
 _ollama = ollama.Client(host=OLLAMA_HOST)
 
-# ── Embedding model (EmbeddingGemma when available, falls back via env var) ──
-# To switch: set OLLAMA_EMBED_MODEL=embedding-gemma:1b in .env after pulling
-_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+# ── Embedding model ───────────────────────────────────────────────────────────
+# embeddinggemma is multilingual (100+ languages incl. Sinhala/Tamil);
+# nomic-embed-text is English-only and kept for existing indexes.
+_EMBED_MODEL = OLLAMA_EMBED_MODEL
+_LEGACY_COLLECTION = "study_materials"  # nomic-embed-text index from earlier versions
+_migrated = False
 
 # ── BM25 sparse index (built lazily from the collection, rebuilt on ingestion) ─
 _bm25_index = None
@@ -27,17 +31,57 @@ except ImportError:
     _BM25Okapi = None
 
 
+def _collection_name(model: str) -> str:
+    # Vectors from different models aren't comparable, so each model gets its own collection
+    if model.startswith("nomic-embed-text"):
+        return _LEGACY_COLLECTION
+    return "study_materials_" + re.sub(r"[^a-z0-9]+", "_", model.lower()).strip("_")
+
+
 def get_collection():
-    return client.get_or_create_collection(
-        name="study_materials",
+    collection = client.get_or_create_collection(
+        name=_collection_name(_EMBED_MODEL),
         metadata={"hnsw:space": "cosine"},
     )
+    _migrate_legacy(collection)
+    return collection
 
 
-def _embed(texts: list) -> list:
-    """Embed a batch of texts in one Ollama call."""
+def _migrate_legacy(collection) -> None:
+    """Re-embed chunks from the old nomic index into the current model's collection.
+
+    Chroma stores the chunk text, so students don't have to re-upload their PDFs.
+    """
+    global _migrated
+    if _migrated or collection.name == _LEGACY_COLLECTION:
+        return
+    _migrated = True
+    try:
+        legacy = client.get_collection(_LEGACY_COLLECTION)
+    except Exception:
+        return  # no old index
+    if collection.count() or not legacy.count():
+        return
+    data = legacy.get(include=["documents", "metadatas"])
+    for i in range(0, len(data["ids"]), 32):
+        docs, metas = data["documents"][i:i + 32], data["metadatas"][i:i + 32]
+        collection.upsert(
+            ids=data["ids"][i:i + 32], documents=docs, metadatas=metas,
+            embeddings=_embed(docs, titles=[m.get("source", "") for m in metas]),
+        )
+
+
+def _embed(texts: list, kind: str = "document", titles: list = None) -> list:
+    """Embed a batch of texts in one Ollama call, with the model's task prompt."""
     if not texts:
         return []
+    if _EMBED_MODEL.startswith("embeddinggemma"):
+        # Prompt formats from the EmbeddingGemma model card
+        if kind == "query":
+            texts = [f"task: search result | query: {t}" for t in texts]
+        else:
+            titles = titles or ["none"] * len(texts)
+            texts = [f"title: {title or 'none'} | text: {t}" for title, t in zip(titles, texts)]
     return list(_ollama.embed(model=_EMBED_MODEL, input=texts)["embeddings"])
 
 
@@ -84,7 +128,7 @@ def ingest_pdf(pdf, subject, language, al_stream=None, al_subject=None):
     if chunks:
         collection.upsert(
             documents=chunks,
-            embeddings=_embed(chunks),
+            embeddings=_embed(chunks, titles=[source] * len(chunks)),
             metadatas=metadatas,
             ids=ids,
         )
@@ -94,7 +138,7 @@ def ingest_pdf(pdf, subject, language, al_stream=None, al_subject=None):
 
 def retrieve_context(query, subject=None, n_results=4, al_subject=None):
     collection = get_collection()
-    query_embedding = _embed([query])[0]
+    query_embedding = _embed([query], kind="query")[0]
     # Build filter: prefer al_subject filter for A/L students, fall back to subject
     if al_subject:
         where = {"al_subject": al_subject}
@@ -110,12 +154,9 @@ def retrieve_context(query, subject=None, n_results=4, al_subject=None):
     if not results["documents"] or not results["documents"][0]:
         return "", []
 
-    context = "\n---\n".join(results["documents"][0])
-    sources = [
-        f"{metadata['source']} page {metadata['page']}"
-        for metadata in results["metadatas"][0]
-    ]
-    return context, sources
+    sources = [_source_label(m) for m in results["metadatas"][0]]
+    context = "\n---\n".join(f"[{s}]\n{d}" for s, d in zip(sources, results["documents"][0]))
+    return context, list(dict.fromkeys(sources))
 
 
 def get_retrieval_coverage(subject: str = None) -> dict:
@@ -169,7 +210,7 @@ def retrieve_context_hybrid(query: str, subject: str = None,
         return "", []
     where = {"al_subject": al_subject} if al_subject else {"subject": subject} if subject else None
     dense = collection.query(
-        query_embeddings=[_embed([query])[0]],
+        query_embeddings=[_embed([query], kind="query")[0]],
         n_results=min(20, collection.count()),
         where=where,
     )
@@ -211,7 +252,8 @@ def retrieve_context_hybrid(query: str, subject: str = None,
         ranked = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
         top_docs = [doc for doc, _ in ranked[:n_results]]
 
-    context = "\n---\n".join(top_docs)
+    # Each chunk carries its [file page N] label so the model can cite it
+    context = "\n---\n".join(f"[{label[d]}]\n{d}" for d in top_docs)
     sources = list(dict.fromkeys(label[d] for d in top_docs))
     return context, sources
 

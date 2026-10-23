@@ -27,13 +27,15 @@ def fake_embeddings(monkeypatch):
     # Deterministic 3-d vectors so no Ollama is needed
     monkeypatch.setattr(
         rag, "_embed",
-        lambda texts: [[float(len(t) % 7), float(t.count("e")), 1.0] for t in texts],
+        lambda texts, **kw: [[float(len(t) % 7), float(t.count("e")), 1.0] for t in texts],
     )
-    try:
-        rag.client.delete_collection("study_materials")
-    except Exception:
-        pass  # first test: nothing to delete
+    for name in {rag._LEGACY_COLLECTION, rag._collection_name(rag._EMBED_MODEL)}:
+        try:
+            rag.client.delete_collection(name)
+        except Exception:
+            pass  # nothing to delete yet
     rag._bm25_index = None
+    rag._migrated = False
 
 
 def test_two_uploads_same_subject_are_both_indexed():
@@ -65,3 +67,26 @@ def test_hybrid_respects_subject_and_rebuilds_bm25_after_restart():
 def test_confidence_uses_context_text():
     ctx = "photosynthesis converts light energy into chemical energy"
     assert rag.get_confidence_score("q", ctx, ["x.pdf page 1"], top_reranker_score=0.7, context=ctx) == "grounded"
+
+
+def test_legacy_nomic_index_is_reembedded_for_new_model(monkeypatch):
+    monkeypatch.setattr(rag, "_EMBED_MODEL", "nomic-embed-text")
+    rag.ingest_pdf(_Upload(_pdf("Osmosis moves water across a membrane " * 3), "old.pdf"), "Biology", "English")
+    legacy_count = rag.get_collection().count()
+
+    monkeypatch.setattr(rag, "_EMBED_MODEL", "embeddinggemma")
+    rag._migrated = False
+    new = rag.get_collection()
+    assert new.name != rag._LEGACY_COLLECTION
+    assert new.count() == legacy_count
+    assert {m["source"] for m in new.get()["metadatas"]} == {"old.pdf"}
+    try:
+        rag.client.delete_collection(new.name)
+    except Exception:
+        pass
+
+
+def test_context_is_labelled_with_source_page():
+    rag.ingest_pdf(_Upload(_pdf("Mitosis produces two identical daughter cells " * 3), "cells.pdf"), "Biology", "English")
+    context, _ = rag.retrieve_context_hybrid("mitosis", subject="Biology")
+    assert context.startswith("[cells.pdf page 1]")
