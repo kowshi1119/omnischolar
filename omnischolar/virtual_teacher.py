@@ -14,7 +14,7 @@ Dr. Omni delivers lessons with:
 """
 
 import concurrent.futures
-import html
+import os
 import json
 import re
 import time
@@ -414,26 +414,21 @@ class VirtualTeacher:
             from contextlib import nullcontext
             _ctx = nullcontext()
 
-        # Bug 1: hard 90-second timeout on lesson call; num_predict capped at 1024
         raw = None
         _timed_out = False
         try:
             with _ctx:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
-                    _future = _pool.submit(
-                        self.client.chat,
-                        messages=[{"role": "user", "content": combined_prompt}],
-                        system_prompt="",
-                        temperature=0.9,
-                        num_ctx=3072,
-                        num_predict=1024,
-                    )
-                    try:
-                        raw = _future.result(timeout=90)
-                    except concurrent.futures.TimeoutError:
-                        _timed_out = True
-                        raw = None
-        except Exception as exc:
+                # The client's HTTP timeout (OLLAMA_TIMEOUT) bounds this call
+                raw = self.client.chat(
+                    messages=[{"role": "user", "content": combined_prompt}],
+                    system_prompt="",
+                    temperature=0.9,
+                    num_ctx=3072,
+                    num_predict=1024,
+                )
+                if raw.startswith("[OmniScholar]"):
+                    _timed_out, raw = True, None
+        except Exception:
             raw = None
 
         if _timed_out or raw is None:
@@ -478,8 +473,8 @@ class VirtualTeacher:
                 message=prompt,
                 system="Return only valid JSON. No markdown.",
                 max_tokens=200,
+                format="json",  # Ollama guarantees parseable JSON
             )
-            raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
             return json.loads(raw)
         except Exception:
             return {
@@ -500,8 +495,8 @@ class VirtualTeacher:
                 message=prompt,
                 system="Return only valid JSON. No markdown.",
                 max_tokens=600,
+                format="json",  # Ollama guarantees parseable JSON
             )
-            raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
             return json.loads(raw)
         except Exception:
             return {
@@ -899,7 +894,7 @@ def render_avatar_teacher(text: str = "", phase: str = "greeting",
         f'<ellipse cx="62" cy="38" rx="6" ry="4" fill="{cheek_c}" opacity="0.35"/>'
     ) if cheek_c not in ("transparent", "") else ""
 
-    components.html(f"""
+    st.iframe(f"""
     <style>
       @keyframes float_{uid} {{
         0%,100% {{ transform: translateY(0px); }}
@@ -1132,12 +1127,14 @@ def render_avatar_teacher(text: str = "", phase: str = "greeting",
 
 # ── Mermaid diagram renderer ─────────────────────────────────────────────────
 
+_MERMAID_COMPONENT = components.declare_component(
+    "omni_mermaid",
+    path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "components", "mermaid"),
+)
+
+
 def render_mermaid_diagram(mermaid_code: str, title: str = "") -> None:
-    """
-    Render Mermaid diagram with v11 neo look + 3D depth shadows.
-    Uses explicit mermaid.render() — never relies on startOnLoad class detection.
-    Always renders — never silently fails.
-    """
+    """Render a Mermaid diagram offline via the vendored component in components/mermaid."""
     if not mermaid_code or not mermaid_code.strip():
         return
 
@@ -1145,146 +1142,7 @@ def render_mermaid_diagram(mermaid_code: str, title: str = "") -> None:
     for fence in ["```mermaid", "```", "~~~"]:
         code = code.replace(fence, "").strip()
 
-    # JSON string literal; escaping "</" stops LLM output from closing the <script> tag
-    code_js = json.dumps(code).replace("</", "<\\/")
-    title = html.escape(title)
-
-    title_html = (
-        f'<div style="font-family:JetBrains Mono,monospace;font-size:10px;'
-        f'color:rgba(0,212,255,0.7);letter-spacing:0.2em;text-transform:uppercase;'
-        f'margin-bottom:12px;">📊 {title}</div>'
-        if title else ""
-    )
-
-    components.html(f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-    <style>
-        body {{ background: transparent; margin: 0; padding: 0; }}
-        .diagram-wrapper {{
-            background: linear-gradient(145deg, #0A1628, #0E1E3C);
-            border: 1px solid rgba(0,212,255,0.2);
-            border-radius: 12px;
-            padding: 20px;
-            margin: 8px 0;
-            position: relative;
-            overflow: hidden;
-            box-shadow:
-                0 4px 6px rgba(0,0,0,0.4),
-                0 8px 15px rgba(0,0,0,0.3),
-                0 20px 40px rgba(0,0,0,0.25),
-                0 0 0 1px rgba(0,212,255,0.05),
-                inset 0 1px 0 rgba(255,255,255,0.06);
-            animation: diagramFadeIn 0.6s cubic-bezier(0.16,1,0.3,1) forwards;
-            opacity: 0;
-            transform: translateY(8px);
-        }}
-        .diagram-wrapper::before {{
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            height: 2px;
-            background: linear-gradient(90deg,
-                transparent 0%,
-                rgba(0,212,255,0.6) 30%,
-                rgba(0,212,255,0.9) 50%,
-                rgba(0,212,255,0.6) 70%,
-                transparent 100%
-            );
-        }}
-        @keyframes diagramFadeIn {{
-            to {{ opacity: 1; transform: translateY(0); }}
-        }}
-        #mermaid-container svg {{
-            filter:
-                drop-shadow(0 4px 8px rgba(0,0,0,0.5))
-                drop-shadow(0 0 20px rgba(0,212,255,0.08));
-            transition: filter 0.3s ease;
-            max-width: 100%;
-            height: auto;
-        }}
-        #mermaid-container svg:hover {{
-            filter:
-                drop-shadow(0 8px 16px rgba(0,0,0,0.6))
-                drop-shadow(0 0 30px rgba(0,212,255,0.15));
-        }}
-    </style>
-    </head>
-    <body>
-    <div class="diagram-wrapper">
-        {title_html}
-        <div id="mermaid-container"></div>
-    </div>
-    <script type="module">
-        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-
-        mermaid.initialize({{
-            startOnLoad: false,
-            look: 'neo',
-            theme: 'base',
-            fontFamily: 'JetBrains Mono, monospace',
-            fontSize: 13,
-            themeVariables: {{
-                primaryColor:        '#1A3050',
-                primaryBorderColor:  '#00D4FF',
-                primaryTextColor:    '#E8F4FF',
-                secondaryColor:      '#0D1E35',
-                secondaryBorderColor:'#00A0C0',
-                secondaryTextColor:  '#C0D8F0',
-                tertiaryColor:       '#0A1628',
-                tertiaryBorderColor: '#4A7090',
-                lineColor:           '#00D4FF',
-                textColor:           '#E8F4FF',
-                mainBkg:             '#1A3050',
-                clusterBkg:          '#0D1E35',
-                edgeLabelBackground: '#0E1E3C',
-                nodeBorder:          '#00D4FF',
-                titleColor:          '#00D4FF',
-                attributeBackgroundColorEven: '#0A1628',
-                attributeBackgroundColorOdd:  '#0D1E35',
-            }},
-            flowchart: {{
-                htmlLabels: true,
-                curve: 'basis',
-                padding: 20,
-                nodeSpacing: 50,
-                rankSpacing: 60,
-                useMaxWidth: true,
-            }},
-            sequence: {{
-                useMaxWidth: true,
-                boxMargin: 10,
-                mirrorActors: false,
-                messageMargin: 40,
-            }},
-            classDiagram: {{ useMaxWidth: true }},
-        }});
-
-        const code = {code_js};
-        const container = document.getElementById('mermaid-container');
-
-        (async () => {{
-            try {{
-                const id = 'mermaid-' + Math.random().toString(36).slice(2, 9);
-                const {{ svg }} = await mermaid.render(id, code);
-                container.innerHTML = svg;
-            }} catch (err) {{
-                container.innerHTML = `
-                  <div style="color:#EF4444;font-size:0.8rem;padding:10px;
-                              font-family:monospace;background:rgba(239,68,68,0.1);
-                              border:1px solid rgba(239,68,68,0.2);border-radius:6px;">
-                    Diagram render error: ${{err.message}}<br>
-                    <pre style="font-size:0.7rem;color:#A0B4D6;margin-top:8px;
-                                white-space:pre-wrap;">${{code}}</pre>
-                  </div>
-                `;
-            }}
-        }})();
-    </script>
-    </body>
-    </html>
-    """, height=420, scrolling=True)
+    _MERMAID_COMPONENT(code=code, title=title, default=None)
 
 
 

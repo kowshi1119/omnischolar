@@ -19,9 +19,14 @@ except ImportError:
 # adding ~2s to every request; 127.0.0.1 avoids the fallback.
 OLLAMA_HOST        = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").replace("//localhost", "//127.0.0.1")
 OLLAMA_MODEL       = os.getenv("OLLAMA_MODEL",       "gemma4:e2b")
-OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+# Multilingual (Sinhala/Tamil); existing nomic indexes are re-embedded automatically
+OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "embeddinggemma")
 OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "gemma4:e4b")
 OLLAMA_TIMEOUT     = int(os.getenv("OLLAMA_TIMEOUT", "120"))
+# How long Ollama keeps the model loaded after a request (avoids cold starts)
+_keep_alive = os.getenv("OLLAMA_KEEP_ALIVE", "30m")
+# Bare numbers ("-1" = forever, "300" = seconds) must be sent as numbers, not duration strings
+OLLAMA_KEEP_ALIVE  = int(_keep_alive) if _keep_alive.lstrip("-").isdigit() else _keep_alive
 OLLAMA_NUM_CTX          = int(os.getenv("OLLAMA_NUM_CTX",          "4096"))
 OLLAMA_NUM_PREDICT      = int(os.getenv("OLLAMA_NUM_PREDICT",      "512"))
 OLLAMA_NUM_BATCH        = int(os.getenv("OLLAMA_NUM_BATCH",        "512"))

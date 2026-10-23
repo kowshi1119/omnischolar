@@ -4,6 +4,8 @@ address = "localhost"
 maxUploadSize = 200
 maxMessageSize = 200
 enableXsrfProtection = true
+# Serves ./static at /app/static (fonts are vendored there for offline use)
+enableStaticServing = true
 
 [browser]
 gatherUsageStats = false
@@ -12,8 +14,73 @@ gatherUsageStats = false
 fastReruns = true
 
 [theme]
-primaryColor     = "#00D4FF"
+base             = "dark"
+primaryColor     = "#00B4A6"
 backgroundColor  = "#060A14"
-secondaryBackgroundColor = "#080D1A"
-textColor        = "#C8DCF0"
-font             = "sans serif"
+secondaryBackgroundColor = "#0D1B2A"
+textColor        = "#F0F4F8"
+# Sinhala/Tamil faces as fallbacks so mixed-script text renders
+font             = "DM Sans, Noto Sans Sinhala, Noto Sans Tamil, sans-serif"
+headingFont      = "DM Sans, Noto Sans Sinhala, Noto Sans Tamil, sans-serif"
+codeFont         = "JetBrains Mono, monospace"
+baseRadius       = "10px"
+
+[[theme.fontFaces]]
+family = "DM Sans"
+url    = "app/static/fonts/dm-sans-latin-300-normal.woff2"
+weight = 300
+
+[[theme.fontFaces]]
+family = "DM Sans"
+url    = "app/static/fonts/dm-sans-latin-400-normal.woff2"
+weight = 400
+
+[[theme.fontFaces]]
+family = "DM Sans"
+url    = "app/static/fonts/dm-sans-latin-500-normal.woff2"
+weight = 500
+
+[[theme.fontFaces]]
+family = "DM Sans"
+url    = "app/static/fonts/dm-sans-latin-600-normal.woff2"
+weight = 600
+
+[[theme.fontFaces]]
+family = "JetBrains Mono"
+url    = "app/static/fonts/jetbrains-mono-latin-400-normal.woff2"
+weight = 400
+
+[[theme.fontFaces]]
+family = "JetBrains Mono"
+url    = "app/static/fonts/jetbrains-mono-latin-600-normal.woff2"
+weight = 600
+
+[[theme.fontFaces]]
+family = "Fraunces"
+url    = "app/static/fonts/fraunces-latin-400-normal.woff2"
+weight = 400
+
+[[theme.fontFaces]]
+family = "Fraunces"
+url    = "app/static/fonts/fraunces-latin-700-normal.woff2"
+weight = 700
+
+[[theme.fontFaces]]
+family = "Noto Sans Sinhala"
+url    = "app/static/fonts/noto-sans-sinhala-sinhala-400-normal.woff2"
+weight = 400
+
+[[theme.fontFaces]]
+family = "Noto Sans Sinhala"
+url    = "app/static/fonts/noto-sans-sinhala-sinhala-600-normal.woff2"
+weight = 600
+
+[[theme.fontFaces]]
+family = "Noto Sans Tamil"
+url    = "app/static/fonts/noto-sans-tamil-tamil-400-normal.woff2"
+weight = 400
+
+[[theme.fontFaces]]
+family = "Noto Sans Tamil"
+url    = "app/static/fonts/noto-sans-tamil-tamil-600-normal.woff2"
+weight = 600

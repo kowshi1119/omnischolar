@@ -8,6 +8,7 @@ import ollama
 from config import (
     OLLAMA_EMBED_MODEL,
     OLLAMA_HOST,
+    OLLAMA_KEEP_ALIVE,
     OLLAMA_MODEL,
     OLLAMA_NUM_CTX,
     OLLAMA_TIMEOUT,
@@ -20,7 +21,12 @@ DEEP_CTX  = 8192   # full lesson generation, paper summarizer
 
 
 class OllamaClient:
-    """Thin wrapper around the ollama Python SDK."""
+    """Thin wrapper around the ollama Python SDK.
+
+    Gemma 4 "thinks" by default, which spent ~85% of generated tokens on hidden
+    reasoning in measurements (6.0s -> 2.5s per answer with it off), so calls
+    disable it unless a caller opts in with think=True.
+    """
 
     def __init__(
         self,
@@ -61,34 +67,58 @@ class OllamaClient:
             pass
         return self.model
 
+    @staticmethod
+    def _build_messages(messages: list, system_prompt: str) -> list:
+        api_messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
+        api_messages.extend(messages)
+        return api_messages
+
+    def _request(self, model, messages, options, think, format, stream=False):
+        return self._client.chat(
+            model=model,
+            messages=messages,
+            options=options,
+            think=think,
+            format=format,
+            keep_alive=OLLAMA_KEEP_ALIVE,  # keep weights in RAM between turns
+            stream=stream,
+        )
+
+    # ── warm-up ───────────────────────────────────────────────────────────────
+    def warmup(self) -> bool:
+        """Load the model into memory so the student's first question isn't a cold start."""
+        try:
+            self._request(self._resolve_model(), [{"role": "user", "content": "hi"}],
+                          {"num_predict": 1, "num_ctx": self.num_ctx}, False, None)
+            return True
+        except Exception:
+            return False
+
     # ── non-streaming chat ────────────────────────────────────────────────────
     def chat(
         self,
         messages:      list,
-        system_prompt: str  = "",
-        thinking:      bool = False,
+        system_prompt: str   = "",
+        thinking:      bool  = False,
         temperature:   float = 0.7,
         num_ctx:       int   = None,
+        num_predict:   int   = None,
+        format=None,
     ) -> str:
         """
         Send a chat request and return the full response text.
         Prepends system_prompt as a system message when provided.
+        `format` may be "json" or a JSON schema dict (Ollama structured outputs).
         """
-        api_messages = []
-        if system_prompt:
-            api_messages.append({"role": "system", "content": system_prompt})
-        api_messages.extend(messages)
-
         model = self._resolve_model()
         options = {"num_ctx": num_ctx if num_ctx is not None else self.num_ctx, "temperature": temperature}
+        if num_predict is not None:
+            options["num_predict"] = num_predict
 
         try:
             # The client's HTTP timeout (OLLAMA_TIMEOUT) bounds the request
-            response = self._client.chat(
-                model=model,
-                messages=api_messages,
-                options=options,
-            )
+            response = self._request(model, self._build_messages(messages, system_prompt),
+                                     options, thinking, format)
             # Handle both dict and object responses
             if hasattr(response, "message"):
                 return response.message.content
@@ -108,21 +138,12 @@ class OllamaClient:
         num_ctx:       int   = None,
     ) -> Iterator[str]:
         """Stream chat tokens. Yields string chunks."""
-        api_messages = []
-        if system_prompt:
-            api_messages.append({"role": "system", "content": system_prompt})
-        api_messages.extend(messages)
-
         model = self._resolve_model()
         options = {"num_ctx": num_ctx if num_ctx is not None else self.num_ctx, "temperature": temperature}
 
         try:
-            for chunk in self._client.chat(
-                model=model,
-                messages=api_messages,
-                stream=True,
-                options=options,
-            ):
+            for chunk in self._request(model, self._build_messages(messages, system_prompt),
+                                       options, False, None, stream=True):
                 content = (
                     chunk.message.content
                     if hasattr(chunk, "message")
@@ -146,16 +167,12 @@ class OllamaClient:
         message: str,
         system: str = "",
         max_tokens: int = 2048,
+        format=None,
     ) -> str:
         """
         Optimised for speed: minimal context window, low temperature, capped output.
         Use for quiz evaluation, battle questions, grounding checks, any < 200 word output.
         """
-        api_messages = []
-        if system:
-            api_messages.append({"role": "system", "content": system})
-        api_messages.append({"role": "user", "content": message})
-
         model = self._resolve_model()
         options = {
             "num_ctx": FAST_CTX,   # minimal context — faster decode
@@ -164,11 +181,8 @@ class OllamaClient:
         }
 
         try:
-            response = self._client.chat(
-                model=model,
-                messages=api_messages,
-                options=options,
-            )
+            response = self._request(model, self._build_messages(
+                [{"role": "user", "content": message}], system), options, False, format)
             if hasattr(response, "message"):
                 return response.message.content
             return response["message"]["content"]
