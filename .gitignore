@@ -60,3 +60,4 @@ Thumbs.db
 Modelfile.v*
 Modelfile.e2b_v2
 unsloth_compiled_cache/
+/.playwright-mcp/

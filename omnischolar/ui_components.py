@@ -709,6 +709,28 @@ def inject_premium_css():
         overflow: hidden;
     }
 
+    /* ══════════════════════════════════════
+       ACCESSIBILITY & RESPONSIVE
+    ══════════════════════════════════════ */
+    :focus-visible {
+        outline: 2px solid var(--color-primary-glow) !important;
+        outline-offset: 2px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+        }
+    }
+    @media (max-width: 768px) {
+        .omni-seal { display: none !important; }  /* fixed badge covers content */
+        .omni-card > div { flex-wrap: wrap; }
+        .block-container { padding-left: 1rem !important; padding-right: 1rem !important; }
+        .stButton > button { min-height: 44px; }  /* touch target */
+        [data-testid="stMain"] h2 { font-size: 1.35rem !important; }
+    }
+
     </style>
     """, unsafe_allow_html=True)
 
@@ -795,7 +817,7 @@ def render_ollama_status_chip(connected: bool, model: str = "gemma4:e4b") -> Non
         f'font-family:\'JetBrains Mono\',monospace;{anim_style}'
         f'margin-bottom:4px;">'
         f'<span style="font-size:0.72rem;font-weight:600;color:{color};">{label}</span>'
-        f'<span style="font-size:0.58rem;color:#3A5060;letter-spacing:0.04em;">9.6GB · 128K ctx · 100% offline</span>'
+        f'<span style="font-size:0.58rem;color:#3A5060;letter-spacing:0.04em;">Local inference · 100% offline</span>'
         f'{hint}'
         f'</div>',
         unsafe_allow_html=True,
@@ -819,7 +841,7 @@ def render_thinking_state(message: str = "Gemma 4 is thinking...") -> None:
       <div style="flex:1;">
         <span class="omni-chip omni-chip-teal"
               style="animation:pulse-teal 1.8s ease-in-out infinite;">
-          &#10227; Gemma 4 E4B reasoning...
+          &#10227; Reasoning...
           <span style="animation:thinking-dots 1.4s ease-in-out infinite;
                        animation-delay:0s;display:inline-block;">&#183;</span>
           <span style="animation:thinking-dots 1.4s ease-in-out infinite;
@@ -855,7 +877,7 @@ def render_welcome_banner(name: str = "Student") -> None:
         f'<div class="omni-card fade-in" style="'
         f'background:linear-gradient(135deg,rgba(0,180,166,0.07) 0%,rgba(13,27,42,0.9) 100%);'
         f'margin-bottom:16px;">'
-        f'<div style="display:flex;align-items:center;justify-content:space-between;gap:16px;">'
+        f'<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;">'
         f'<div>'
         f'<div style="font-family:var(--font-mono);font-size:0.58rem;color:#3A5060;'
         f'letter-spacing:0.22em;text-transform:uppercase;margin-bottom:6px;">WELCOME BACK</div>'
@@ -1151,7 +1173,8 @@ def render_offline_seal() -> None:
     Uses seal-breathe animation. Tooltip: "Running 100% offline · Zero cloud · Fully private"
     """
     st.markdown("""
-    <div title="Running 100% offline · Zero cloud · Fully private"
+    <div class="omni-seal" role="img" aria-label="Running 100% offline"
+         title="Running 100% offline · Zero cloud · Fully private"
          style="position:fixed;top:16px;right:20px;z-index:9999;
                 width:52px;height:52px;border-radius:50%;
                 background:conic-gradient(
