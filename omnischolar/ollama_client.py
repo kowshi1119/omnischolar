@@ -1,16 +1,17 @@
 # ollama_client.py — Gemma 4 interface
 # OmniScholar | wraps the ollama library for chat and embeddings
 
-import concurrent.futures
-import os
 from typing import Iterator
 
 import ollama
 
-OLLAMA_HOST        = os.getenv("OLLAMA_HOST",        "http://localhost:11434")
-OLLAMA_MODEL       = os.getenv("OLLAMA_MODEL",       "gemma4:latest")
-OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
-OLLAMA_NUM_CTX     = int(os.getenv("OLLAMA_NUM_CTX", "4096"))
+from config import (
+    OLLAMA_EMBED_MODEL,
+    OLLAMA_HOST,
+    OLLAMA_MODEL,
+    OLLAMA_NUM_CTX,
+    OLLAMA_TIMEOUT,
+)
 
 # Context window presets — choose the smallest that fits the task
 FAST_CTX  = 2048   # quiz grading, short evaluations, battle questions
@@ -32,12 +33,18 @@ class OllamaClient:
         self.model       = model
         self.embed_model = embed_model
         self.num_ctx     = num_ctx
-        self._client     = ollama.Client(host=host)
+        self._client     = ollama.Client(host=host, timeout=OLLAMA_TIMEOUT)
+        self._resolved   = None
 
-    # ── pick best available gemma4 model ─────────────────────────────────────
+    # ── pick the model to use ────────────────────────────────────────────────
     def _resolve_model(self) -> str:
-        """Return the best available Gemma 4 model name."""
-        preferred = ("gemma4:e4b", "gemma4:latest", "gemma4")
+        """Return the configured model if installed, else the best Gemma 4 fallback.
+
+        Resolved once per client; a failed lookup is retried on the next call.
+        """
+        if self._resolved:
+            return self._resolved
+        preferred = (self.model, f"{self.model}:latest", "gemma4:e2b", "gemma4:e4b", "gemma4:latest")
         try:
             response = self._client.list()
             available = []
@@ -45,12 +52,11 @@ class OllamaClient:
                 name = getattr(item, "model", None) or (item.get("model") if isinstance(item, dict) else None)
                 if name:
                     available.append(name)
-            for candidate in preferred:
-                if candidate in available:
-                    return candidate
-            for name in available:
-                if "gemma4" in name:
-                    return name
+            choice = next((c for c in preferred if c in available), None)
+            choice = choice or next((n for n in available if "gemma4" in n and "cloud" not in n), None)
+            if choice:
+                self._resolved = choice
+                return choice
         except Exception:
             pass
         return self.model
@@ -74,23 +80,15 @@ class OllamaClient:
         api_messages.extend(messages)
 
         model = self._resolve_model()
-        options = {"num_ctx": num_ctx if num_ctx is not None else STUDY_CTX, "temperature": temperature}
+        options = {"num_ctx": num_ctx if num_ctx is not None else self.num_ctx, "temperature": temperature}
 
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(
-                    self._client.chat,
-                    model=model,
-                    messages=api_messages,
-                    options=options,
-                )
-                try:
-                    response = future.result(timeout=120)
-                except concurrent.futures.TimeoutError:
-                    return (
-                        "[OmniScholar] Response timed out after 2 minutes. "
-                        "Try reducing question count or restarting Ollama."
-                    )
+            # The client's HTTP timeout (OLLAMA_TIMEOUT) bounds the request
+            response = self._client.chat(
+                model=model,
+                messages=api_messages,
+                options=options,
+            )
             # Handle both dict and object responses
             if hasattr(response, "message"):
                 return response.message.content
@@ -116,7 +114,7 @@ class OllamaClient:
         api_messages.extend(messages)
 
         model = self._resolve_model()
-        options = {"num_ctx": num_ctx if num_ctx is not None else STUDY_CTX, "temperature": temperature}
+        options = {"num_ctx": num_ctx if num_ctx is not None else self.num_ctx, "temperature": temperature}
 
         try:
             for chunk in self._client.chat(
@@ -140,8 +138,7 @@ class OllamaClient:
     # ── embeddings ────────────────────────────────────────────────────────────
     def embed(self, text: str) -> list:
         """Return embedding vector for a string."""
-        result = ollama.embeddings(model=self.embed_model, prompt=text)
-        return result["embedding"]
+        return list(self._client.embed(model=self.embed_model, input=text)["embeddings"][0])
 
     # ── fast chat (speed-optimised for short-output tasks) ────────────────────
     def fast_chat(

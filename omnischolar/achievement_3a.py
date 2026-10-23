@@ -10,7 +10,7 @@ import json
 import math
 import os
 from collections import Counter
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 import streamlit as st
 
@@ -19,7 +19,6 @@ from prompt import PAPER_SUMMARIZER_PROMPT, PREDICTION_ENGINE_PROMPT, CURRICULUM
 from ui_components import (
     COLORS,
     render_chapter_bars,
-    render_exam_readiness_hero,
     render_thinking_state,
 )
 
@@ -282,7 +281,7 @@ def _render_paper_library(student: dict, db, llm):
 
             st.dataframe(
                 [{k: v for k, v in r.items() if k != "_id"} for r in rows],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -335,7 +334,7 @@ def _render_summarizer(student: dict, db, llm):
 
     uploaded = st.file_uploader("Upload Paper PDF", type=["pdf"], key="summ_pdf_upload")
 
-    if uploaded and st.button("📊 Generate Summary", use_container_width=True, type="primary"):
+    if uploaded and st.button("📊 Generate Summary", width="stretch", type="primary"):
         with st.spinner("Extracting text from PDF..."):
             try:
                 import fitz  # PyMuPDF
@@ -445,7 +444,7 @@ def _render_prediction_engine(student: dict, db, llm):
                 unsafe_allow_html=True,
             )
 
-    if st.button("🔮 Generate 2027 Prediction", use_container_width=True, type="primary", key="btn_predict"):
+    if st.button("🔮 Generate 2027 Prediction", width="stretch", type="primary", key="btn_predict"):
         freq_table_str = "\n".join(
             f"| {topic} | {count}/10 years |" for topic, count in sorted(freq.items(), key=lambda x: x[1], reverse=True)
         )
@@ -568,7 +567,7 @@ def _render_curriculum_alignment(student: dict, db, llm):
         height=120,
     )
 
-    if topics_input.strip() and st.button("🗂️ Map to NIE Syllabus", use_container_width=True, type="primary"):
+    if topics_input.strip() and st.button("🗂️ Map to NIE Syllabus", width="stretch", type="primary"):
         syllabus_summary = "\n".join(
             f"{ch['unit_id']}: {ch['name']} — subtopics: {', '.join(ch.get('subtopics', []))}"
             for ch in chapters
@@ -910,7 +909,7 @@ def _render_3a_dashboard(student: dict, db, llm):
     with qcol1:
         if st.button(
             "📄 Past Paper Practice",
-            use_container_width=True,
+            width="stretch",
             help="Practice with real A/L past papers",
         ):
             st.session_state["mode"] = "PAST_PAPER"
@@ -918,7 +917,7 @@ def _render_3a_dashboard(student: dict, db, llm):
     with qcol2:
         if st.button(
             "🧪 Take a Quiz",
-            use_container_width=True,
+            width="stretch",
             type="primary",
             help="Build quiz history for better readiness scoring",
         ):
@@ -927,7 +926,7 @@ def _render_3a_dashboard(student: dict, db, llm):
     with qcol3:
         if st.button(
             "📅 Update Study Plan",
-            use_container_width=True,
+            width="stretch",
             help="Regenerate your day-by-day plan",
         ):
             st.session_state["mode"] = "STUDY_PLAN"
@@ -1046,7 +1045,7 @@ def render_3a_achievement_mode(student: dict, db, llm):
             if st.button(
                 "📝 Start Quiz in Test Me →",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
             ):
                 st.session_state["mode"] = "TEST_ME"
                 st.rerun()

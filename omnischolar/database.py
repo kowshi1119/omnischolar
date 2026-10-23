@@ -1,7 +1,6 @@
 import sqlite3
-import os
 
-DB_PATH = os.getenv("SQLITE_DB_PATH", "omnischolar.db")
+from config import SQLITE_DB_PATH as DB_PATH
 
 
 def init_db():
@@ -109,6 +108,14 @@ def init_db():
             conn.commit()
         except Exception:
             pass  # column already exists
+    try:
+        c.execute("ALTER TABLE quiz_history ADD COLUMN subject TEXT DEFAULT ''")
+    except Exception:
+        pass  # column already exists
+    for _table in ("quiz_history", "weak_concepts", "study_sessions"):
+        c.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{_table}_student ON {_table}(student_id)"
+        )
     conn.commit()
     conn.close()
 
@@ -141,10 +148,16 @@ def save_student(profile_or_id, name=None, subject=None, exam_date=None,
     c = conn.cursor()
     c.execute(
         """
-        INSERT OR REPLACE INTO students
+        INSERT INTO students
         (student_id, name, subject, exam_date, preferred_language, weak_areas,
          student_type, al_stream, al_subjects)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(student_id) DO UPDATE SET
+            name = excluded.name, subject = excluded.subject,
+            exam_date = excluded.exam_date,
+            preferred_language = excluded.preferred_language,
+            weak_areas = excluded.weak_areas, student_type = excluded.student_type,
+            al_stream = excluded.al_stream, al_subjects = excluded.al_subjects
         """,
         (
             profile["student_id"],
@@ -162,16 +175,27 @@ def save_student(profile_or_id, name=None, subject=None, exam_date=None,
     conn.close()
 
 
-def save_quiz_result(student_id, topic, score, total, misconception=""):
+def save_quiz_result(student_id, topic, score, total, misconception="", subject=""):
+    """Record a quiz attempt and mark today as a study day (drives the streak)."""
+    from datetime import date
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
         """
-        INSERT INTO quiz_history (student_id, topic, score, total, misconception)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO quiz_history (student_id, topic, score, total, misconception, subject)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (student_id, topic, score, total, misconception),
+        (student_id, topic, score, total, misconception, subject),
     )
+    today = date.today().isoformat()
+    if not c.execute(
+        "SELECT 1 FROM study_sessions WHERE student_id = ? AND session_date = ?",
+        (student_id, today),
+    ).fetchone():
+        c.execute(
+            "INSERT INTO study_sessions (student_id, session_date) VALUES (?, ?)",
+            (student_id, today),
+        )
     conn.commit()
     conn.close()
 
@@ -232,7 +256,8 @@ class Database:
             ("topic",      "TEXT DEFAULT ''"),
             ("error_type", "TEXT DEFAULT 'factual_error'"),
             ("frequency",  "INTEGER DEFAULT 1"),
-            ("last_seen",  "DATETIME DEFAULT CURRENT_TIMESTAMP"),
+            # SQLite can't ADD COLUMN with a non-constant default; backfilled below
+            ("last_seen",  "DATETIME"),
         ]:
             try:
                 conn.execute(
@@ -241,6 +266,11 @@ class Database:
                 conn.commit()
             except Exception:
                 pass
+        conn.execute(
+            "UPDATE weak_concepts SET last_seen = COALESCE(created_at, CURRENT_TIMESTAMP) "
+            "WHERE last_seen IS NULL"
+        )
+        conn.commit()
 
         # Add missing columns to past_paper_sessions
         for _col, _type in [
@@ -482,8 +512,8 @@ class Database:
                 c.execute(
                     """INSERT INTO weak_concepts
                        (student_id, concept, subject, topic, error_type,
-                        frequency, resolved)
-                       VALUES (?, ?, ?, ?, ?, 1, 0)""",
+                        frequency, resolved, last_seen)
+                       VALUES (?, ?, ?, ?, ?, 1, 0, CURRENT_TIMESTAMP)""",
                     (student_id, concept, subject or topic, topic, error_type),
                 )
             conn.commit()
@@ -637,6 +667,17 @@ class Database:
             conn.close()
             return []
 
+    def resolve_concept(self, concept_id: int) -> None:
+        conn = self._conn()
+        try:
+            conn.execute("UPDATE weak_concepts SET resolved = 1 WHERE id = ?", (concept_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_quiz_history(self, student_id: str) -> list:
+        return get_quiz_history(student_id)
+
     def record_weak_concept(self, student_id: str, concept: str, subject: str = "") -> None:
         conn = self._conn()
         c = conn.cursor()
@@ -762,7 +803,7 @@ class Database:
     # ── Analytics ─────────────────────────────────────────────────────────────
     def get_class_analytics(self, subject: str | None = None) -> dict:
         """Return aggregate stats across all students, optionally filtered by subject."""
-        conn = sqlite3.connect(DB_PATH)
+        conn = self._conn()
         c = conn.cursor()
         try:
             c.execute("SELECT COUNT(*) FROM students")

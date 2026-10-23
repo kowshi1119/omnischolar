@@ -10,10 +10,7 @@ import streamlit as st
 import json
 import math
 
-import streamlit as st
 
-from prompt import PAPER_GEN_PROMPT
-from rag import retrieve_context
 
 
 _UNIVERSITIES = ["General", "Colombo", "Peradeniya", "Kelaniya", "Ruhuna", "SLIIT"]
@@ -354,7 +351,7 @@ def render_teacher_mode(student: dict, db, llm):
         generate_btn = st.button(
             f"Generate {num_q}-Question {paper_subject} Paper",
             type="primary",
-            use_container_width=True,
+            width="stretch",
         )
 
         if "generated_paper" not in st.session_state:

@@ -10,7 +10,7 @@ from pathlib import Path
 try:
     from dotenv import load_dotenv
     _env_path = Path(__file__).parent / ".env"
-    load_dotenv(_env_path, override=True)
+    load_dotenv(_env_path)  # real environment variables win over .env
 except ImportError:
     pass
 
@@ -18,6 +18,7 @@ except ImportError:
 OLLAMA_HOST        = os.getenv("OLLAMA_HOST",        "http://localhost:11434")
 OLLAMA_MODEL       = os.getenv("OLLAMA_MODEL",       "gemma4:e2b")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "gemma4:e4b")
 OLLAMA_TIMEOUT     = int(os.getenv("OLLAMA_TIMEOUT", "120"))
 OLLAMA_NUM_CTX          = int(os.getenv("OLLAMA_NUM_CTX",          "2048"))
 OLLAMA_NUM_PREDICT      = int(os.getenv("OLLAMA_NUM_PREDICT",      "512"))
@@ -26,11 +27,20 @@ OLLAMA_NUM_PARALLEL     = int(os.getenv("OLLAMA_NUM_PARALLEL",     "1"))
 OLLAMA_MAX_LOADED_MODELS = int(os.getenv("OLLAMA_MAX_LOADED_MODELS", "1"))
 
 # ── ChromaDB ───────────────────────────────────────────────────────────────────
-CHROMA_DB_PATH          = os.getenv("CHROMA_DB_PATH",          "./study_db")
+_APP_DIR = Path(__file__).parent
+
+
+def _app_path(value: str) -> str:
+    """Resolve relative paths against the app folder so the cwd doesn't matter."""
+    path = Path(value)
+    return str(path if path.is_absolute() else (_APP_DIR / path).resolve())
+
+
+CHROMA_DB_PATH          = _app_path(os.getenv("CHROMA_DB_PATH", "./study_db"))
 CHROMA_COLLECTION_NAME  = os.getenv("CHROMA_COLLECTION_NAME",  "omnischolar_materials")
 
 # ── SQLite ─────────────────────────────────────────────────────────────────────
-SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", "./omnischolar.db")
+SQLITE_DB_PATH = _app_path(os.getenv("SQLITE_DB_PATH", "./omnischolar.db"))
 
 # ── App ────────────────────────────────────────────────────────────────────────
 APP_NAME         = os.getenv("APP_NAME",         "OmniScholar")

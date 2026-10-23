@@ -1,7 +1,6 @@
 # past_paper.py — Past Paper Battle Mode
 # OmniScholar | Gemma 4 Good Hackathon
 
-import json
 import re
 import time
 
@@ -450,9 +449,9 @@ def render_past_paper_mode(student: dict, db, llm):
 
         col_submit, col_skip = st.columns([2, 1])
         with col_submit:
-            submit = st.button("Submit Answer →", type="primary", use_container_width=True)
+            submit = st.button("Submit Answer →", type="primary", width="stretch")
         with col_skip:
-            skip = st.button("Skip (0 marks)", use_container_width=True)
+            skip = st.button("Skip (0 marks)", width="stretch")
 
         if submit or skip:
             final_answer = answer.strip() if (submit and answer.strip()) else "[No answer provided]"

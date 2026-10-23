@@ -4,6 +4,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import json
+import re
 import uuid
 from datetime import date, datetime, timedelta
 
@@ -16,10 +17,10 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-from config import OLLAMA_MODEL
-from database import Database, init_db, save_student, get_quiz_history
+from config import APP_DEBUG, OLLAMA_HOST, OLLAMA_MODEL
+from database import Database, init_db, save_student, save_quiz_result, get_quiz_history
 from ollama_client import OllamaClient
-from rag import ingest_pdf, retrieve_context, retrieve_context_hybrid, get_confidence_score, get_retrieval_coverage
+from rag import ingest_pdf, retrieve_context_hybrid, get_confidence_score
 from prompt import SYSTEM_PROMPT
 from ui_components import (
     inject_premium_css,
@@ -36,12 +37,10 @@ from ui_components import (
     render_ollama_status_chip,
     render_offline_seal,
     render_offline_confirmed_toast,
-    COLORS,
 )
-from achievement import render_achievement_mode
 from achievement_3a import render_3a_achievement_mode, calculate_readiness
 from past_paper import render_past_paper_mode
-from study_plan import render_study_plan_mode, get_todays_topic, build_schedule
+from study_plan import render_study_plan_mode, get_todays_topic
 from teacher import render_teacher_mode
 from weakness import render_weakness_mode
 from virtual_teacher import render_virtual_teacher_mode
@@ -101,7 +100,7 @@ _DELEGATED = {
 def _init_session():
     defaults = {
         "student_id": str(uuid.uuid4()),
-        "name": "Kowshi",
+        "name": "Student",
         "subject": "Computer Science",
         "exam_date": str(date.today() + timedelta(days=30)),
         "weak_areas": "",
@@ -133,11 +132,15 @@ def _init_session():
             st.session_state["subject"] = loaded.get("subject") or st.session_state["subject"]
             st.session_state["exam_date"] = loaded.get("exam_date") or st.session_state["exam_date"]
             st.session_state["weak_areas"] = loaded.get("weak_areas") or st.session_state["weak_areas"]
-            st.session_state["preferred_language"] = loaded.get("preferred_language") or st.session_state["preferred_language"]
+            # DB rows may hold lowercase defaults like "english"
+            st.session_state["preferred_language"] = (loaded.get("preferred_language") or "English").title()
             st.session_state["student_type"] = loaded.get("student_type") or st.session_state["student_type"]
             st.session_state["al_stream"] = loaded.get("al_stream") or st.session_state["al_stream"]
             _loaded_subjects = loaded.get("al_subjects") or []
             st.session_state["al_subjects"] = _loaded_subjects if isinstance(_loaded_subjects, list) else []
+            # Restore indexed-PDF list so RAG keeps working after a restart
+            _pdfs = db.get_student_pdf(st.session_state["student_id"])
+            st.session_state["rag_docs"] = [p for p in _pdfs.split(",") if p] if _pdfs else []
 
         st.session_state["_profile_hydrated"] = True
 
@@ -192,7 +195,8 @@ def _render_sidebar():
         st.session_state["weak_areas"] = st.text_area("Weak Areas (comma-separated)", value=st.session_state.get("weak_areas", ""), height=80, key="_sb_weak")
         st.session_state["preferred_language"] = st.selectbox(
             "Language", ["English", "Sinhala", "Tamil"],
-            index=["English", "Sinhala", "Tamil"].index(st.session_state.get("preferred_language", "English")),
+            index=["English", "Sinhala", "Tamil"].index(st.session_state.get("preferred_language", "English"))
+            if st.session_state.get("preferred_language") in ("English", "Sinhala", "Tamil") else 0,
             key="_sb_lang",
         )
 
@@ -246,7 +250,7 @@ def _render_sidebar():
             st.session_state["al_stream"] = ""
             st.session_state["al_subjects"] = []
 
-        if st.button("Save Profile", use_container_width=True):
+        if st.button("Save Profile", width="stretch"):
             s = _student()
             _al_subjects_json = json.dumps(s.get("al_subjects") or [])
             save_student({
@@ -297,7 +301,7 @@ def _render_sidebar():
             if st.sidebar.button(
                 _label,
                 key=f"nav_btn_{_mode_val}",
-                use_container_width=True,
+                width="stretch",
                 type="primary" if _is_active else "secondary",
             ):
                 if st.session_state["mode"] != _mode_val:
@@ -329,7 +333,7 @@ def _render_sidebar():
                 if st.button(
                     _label,
                     key=f"nav_btn_{_mode_val}",
-                    use_container_width=True,
+                    width="stretch",
                     type="primary" if _is_active else "secondary",
                 ):
                     if st.session_state["mode"] != _mode_val:
@@ -398,7 +402,7 @@ def _render_sidebar():
             if _is_unlocked:
                 if st.sidebar.button(
                     "🏆 3A Achievement Engine",
-                    use_container_width=True,
+                    width="stretch",
                     help="Elo IRT readiness · DoE grade calibration",
                     key="btn_3a_achievement",
                 ):
@@ -476,7 +480,7 @@ def _render_sidebar():
             """, unsafe_allow_html=True)
             if st.sidebar.button(
                 "📊 My Progress",
-                use_container_width=True,
+                width="stretch",
                 help="View your study progress and readiness",
                 key="btn_progress_ug",
             ):
@@ -611,8 +615,10 @@ def _handle_chat_mode(mode, student):
                 try:
                     # For A/L students, filter RAG by the active subject in their stream
                     _al_subjects = student.get("al_subjects") or []
-                    _rag_subject = _al_subjects[0] if _al_subjects else student["subject"]
-                    rag_context, rag_sources = retrieve_context_hybrid(prompt, subject=_rag_subject)
+                    if _al_subjects:
+                        rag_context, rag_sources = retrieve_context_hybrid(prompt, al_subject=_al_subjects[0])
+                    else:
+                        rag_context, rag_sources = retrieve_context_hybrid(prompt, subject=student["subject"])
                 except Exception:
                     rag_context = ""
                     rag_sources = []
@@ -637,17 +643,34 @@ def _handle_chat_mode(mode, student):
                 placeholder.markdown(full_response)
 
             if rag_context:
-                _conf = get_confidence_score(prompt, full_response, rag_sources)
+                _conf = get_confidence_score(prompt, full_response, rag_sources, context=rag_context)
                 render_grounding_indicator(sources=rag_sources, level=_conf)
 
         st.session_state["chat_history"].append({"role": "assistant", "content": full_response})
+
+
+_LLM_ERROR_PREFIX = "[OmniScholar]"
+
+
+def _score_quiz(quiz_text: str, user_answers: str) -> tuple:
+    """Score answers like "1:A 2:C" against the quiz's "Answer: X" lines.
+
+    Returns (correct, total); total is 0 when no answer key could be parsed.
+    """
+    key = re.findall(r"Answer\s*[:\-]\s*\**\s*\(?([A-D])\b", quiz_text, re.IGNORECASE)
+    given = {
+        int(n): letter.upper()
+        for n, letter in re.findall(r"(\d+)\s*[:.)\-=]?\s*\(?([A-Da-d])\b", user_answers)
+    }
+    correct = sum(1 for i, ans in enumerate(key, start=1) if given.get(i) == ans.upper())
+    return correct, len(key)
 
 
 def _handle_test_me(student):
     st.markdown("<h2 style='color:#A855F7;'>Test Me</h2><p style='color:#A0B4D6;'>Challenge yourself with AI-generated questions.</p>", unsafe_allow_html=True)
     topic = st.text_input("Topic to be tested on", placeholder=f"e.g. {student['subject']} Chapter 3", key="_tm_topic")
     num_q = st.slider("Number of questions", 3, 10, 5, key="_tm_num")
-    if st.button("Generate Quiz", use_container_width=True):
+    if st.button("Generate Quiz", width="stretch"):
         with st.spinner("Generating questions..."):
             prompt_text = (
                 f"Create {num_q} multiple-choice quiz questions about '{topic}' "
@@ -657,14 +680,33 @@ def _handle_test_me(student):
             try:
                 quiz_text = _llm.chat([{"role": "system", "content": _build_system_prompt(student)}, {"role": "user", "content": prompt_text}])
             except Exception as e:
-                quiz_text = f"Error: {e}"
-        st.markdown(quiz_text)
-        st.session_state["last_quiz"] = quiz_text
-        st.session_state["last_quiz_topic"] = topic
+                quiz_text = f"{_LLM_ERROR_PREFIX} {e}"
+        if quiz_text.startswith(_LLM_ERROR_PREFIX):
+            st.error("Couldn't generate a quiz — the local model didn't respond. Check that Ollama is running, then try again.")
+            if APP_DEBUG:
+                st.code(quiz_text)
+        else:
+            st.session_state["last_quiz"] = quiz_text
+            st.session_state["last_quiz_topic"] = topic or student["subject"]
+            st.session_state.pop("_tm_saved_for", None)
     if "last_quiz" in st.session_state:
+        st.markdown(st.session_state["last_quiz"])
         st.divider()
         user_answers = st.text_area("Paste your answers (e.g. 1:A 2:C 3:B)", key="_tm_answers", height=80)
         if st.button("Check Answers", key="_tm_check"):
+            if not user_answers.strip():
+                st.warning("Enter your answers first, e.g. `1:A 2:C 3:B`.")
+                return
+            correct, total = _score_quiz(st.session_state["last_quiz"], user_answers)
+            if total:
+                st.metric("Score", f"{correct}/{total}", f"{round(100 * correct / total)}%")
+                # Guard against double-saving the same quiz on repeated clicks
+                if st.session_state.get("_tm_saved_for") != st.session_state["last_quiz"]:
+                    save_quiz_result(
+                        student["student_id"], st.session_state["last_quiz_topic"],
+                        correct, total, subject=student["subject"],
+                    )
+                    st.session_state["_tm_saved_for"] = st.session_state["last_quiz"]
             with st.spinner("Evaluating..."):
                 try:
                     feedback = _llm.chat([
@@ -683,9 +725,9 @@ def _handle_find_weak_areas(student):
     if weak_from_db:
         st.subheader("Known Weak Concepts")
         for w in weak_from_db:
-            st.markdown(f"- **{w['concept']}** *(recorded {w['created_at'][:10]})*")
+            st.markdown(f"- **{w['concept']}** *(last seen {(w.get('last_seen') or '')[:10]})*")
         st.divider()
-    if st.button("Analyse My Weak Areas", use_container_width=True):
+    if st.button("Analyse My Weak Areas", width="stretch"):
         history_summary = "\n".join([f"- {r[0]}: {r[1]}/{r[2]}" for r in quiz_history[:10]]) if quiz_history else "No quiz history yet."
         prompt_text = (
             f"Based on this quiz history for {student['subject']}:\n{history_summary}\n\n"
@@ -760,26 +802,29 @@ def _render_dashboard(student):
     render_impact_counter(streak=streak, questions=questions, fixed=fixed)
 
 
+@st.cache_data(ttl=15, show_spinner=False)
 def _check_ollama_connection() -> bool:
-    """Return True if Ollama API is reachable."""
+    """Return True if Ollama API is reachable (cached briefly to keep reruns fast)."""
     try:
         import httpx
-        return httpx.get("http://localhost:11434/api/tags", timeout=3).status_code == 200
+        return httpx.get(f"{OLLAMA_HOST.rstrip('/')}/api/tags", timeout=3).status_code == 200
     except Exception:
-        try:
-            import requests
-            return requests.get("http://localhost:11434/api/tags", timeout=3).status_code == 200
-        except Exception:
-            return False
+        return False
 
 
 def main():
     _render_sidebar()
     _ollama_ok = _check_ollama_connection()
+    st.session_state["ollama_connected"] = _ollama_ok
+    if _ollama_ok:
+        st.session_state["ollama_model"] = _llm._resolve_model()
     if not _ollama_ok:
-        st.sidebar.error("⚠️ Ollama not responding on :11434")
-        st.error("**Gemma 4 is not running.**\n\nOpen PowerShell and run:\n```\nollama serve\n```\nThen refresh this page.")
-        return
+        st.sidebar.error(f"⚠️ Ollama not responding at {OLLAMA_HOST}")
+        st.warning(
+            "**The local AI model isn't running.** Your progress, study plan and "
+            "history still work, but AI answers won't. Start it with `ollama serve`, "
+            "then refresh this page."
+        )
     else:
         st.sidebar.success("✅ Ollama connected")
     student = _student()
@@ -791,7 +836,7 @@ def main():
     with header_col1:
         render_ollama_status_chip(
             connected=_ollama_ok,
-            model=os.getenv("OLLAMA_MODEL", OLLAMA_MODEL)
+            model=st.session_state.get("ollama_model", OLLAMA_MODEL)
         )
     with header_col2:
         pass  # Reserved
@@ -917,7 +962,7 @@ def main():
                     if st.button(
                         "📝 Start Quiz in Test Me →",
                         type="primary",
-                        use_container_width=True,
+                        width="stretch",
                         key="_three_a_goto_test",
                     ):
                         st.session_state["mode"] = "TEST_ME"
@@ -939,10 +984,9 @@ def main():
         else:
             st.error(f"Unknown mode: {mode}")
     except Exception as _mode_err:
-        st.error(f"⚠️ Mode error: {_mode_err}")
-        st.code(str(_mode_err))
-        import traceback
-        st.text(traceback.format_exc())
+        st.error("⚠️ Something went wrong in this mode. Try again, or switch modes from the sidebar.")
+        if APP_DEBUG:
+            st.exception(_mode_err)
 
 
 main()

@@ -14,21 +14,20 @@ Dr. Omni delivers lessons with:
 """
 
 import concurrent.futures
+import html
 import json
 import re
 import time
-import uuid
 
 import streamlit as st
 import streamlit.components.v1 as components
 
 from prompt import (
-    VIRTUAL_TEACHER_PROMPT,
     VIRTUAL_TEACHER_EVAL_PROMPT,
     VIRTUAL_TEACHER_SOCRATIC_FOLLOWUP,
     VIRTUAL_TEACHER_RECAP_PROMPT,
 )
-from rag import retrieve_context, retrieve_context_hybrid
+from rag import retrieve_context_hybrid
 
 
 # ── Lesson memory across topics in session ────────────────────────────────────
@@ -1146,12 +1145,9 @@ def render_mermaid_diagram(mermaid_code: str, title: str = "") -> None:
     for fence in ["```mermaid", "```", "~~~"]:
         code = code.replace(fence, "").strip()
 
-    escaped = (
-        code
-        .replace("\\", "\\\\")
-        .replace("`", "\\`")
-        .replace("$", "\\$")
-    )
+    # JSON string literal; escaping "</" stops LLM output from closing the <script> tag
+    code_js = json.dumps(code).replace("</", "<\\/")
+    title = html.escape(title)
 
     title_html = (
         f'<div style="font-family:JetBrains Mono,monospace;font-size:10px;'
@@ -1265,7 +1261,7 @@ def render_mermaid_diagram(mermaid_code: str, title: str = "") -> None:
             classDiagram: {{ useMaxWidth: true }},
         }});
 
-        const code = `{escaped}`;
+        const code = {code_js};
         const container = document.getElementById('mermaid-container');
 
         (async () => {{
@@ -1503,7 +1499,7 @@ def render_image_explainer(student: dict, ollama_client) -> None:
                     (int(img.width * ratio), int(img.height * ratio)),
                     Image.LANCZOS,
                 )
-            st.image(img, use_container_width=True)
+            st.image(img, width="stretch")
 
         with col2:
             if st.button("🔍 Explain This", type="primary", key="btn_explain_image"):
@@ -1512,10 +1508,11 @@ def render_image_explainer(student: dict, ollama_client) -> None:
                 img_b64 = base64.b64encode(buf.getvalue()).decode()
 
                 with st.spinner("Dr. Omni is analysing the image..."):
-                    import ollama as _ollama_lib
+                    from config import OLLAMA_VISION_MODEL
                     try:
-                        resp = _ollama_lib.chat(
-                            model="gemma4:e4b",
+                        # Vision needs a model with an image projector, so it is configured separately
+                        resp = ollama_client._client.chat(
+                            model=OLLAMA_VISION_MODEL,
                             messages=[{
                                 "role": "user",
                                 "content": (
@@ -1620,7 +1617,7 @@ def render_virtual_teacher_mode(student: dict, ollama_client, db, rag=None):
             st.markdown("<br>", unsafe_allow_html=True)
             start = st.button("🎓 Teach Me", type="primary",
                               disabled=not bool(topic.strip()),
-                              use_container_width=True)
+                              width="stretch")
 
         if start:
             saved_topic_input = topic.strip()
@@ -1706,7 +1703,7 @@ def render_virtual_teacher_mode(student: dict, ollama_client, db, rag=None):
                     if st.button(
                         "🔄 Retry (simpler prompt)",
                         type="primary",
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         st.session_state.pop("vt_lesson", None)
                         st.session_state["vt_use_simple_prompt"] = True
@@ -1714,7 +1711,7 @@ def render_virtual_teacher_mode(student: dict, ollama_client, db, rag=None):
                 with _c2:
                     if st.button(
                         "📖 Try different topic",
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         for _k in [
                             "vt_lesson", "vt_topic", "vt_phase",

@@ -5,6 +5,8 @@ Design System v2: Warm Teal + Scholarly Gold + Neon Live Indicator
 Fonts: Fraunces (display) · DM Sans (body) · JetBrains Mono (code/metrics)
 """
 
+import html
+
 import streamlit as st
 
 # ── Colour palette ─────────────────────────────────────────────────────────────
@@ -836,14 +838,16 @@ def render_thinking_state(message: str = "Gemma 4 is thinking...") -> None:
 
 # ── Welcome banner ─────────────────────────────────────────────────────────────
 
-def render_welcome_banner(name: str = "Kowshi") -> None:
+def render_welcome_banner(name: str = "Student") -> None:
     """2-column card banner — name + Ollama/privacy status chips."""
     connected = st.session_state.get("ollama_connected", False)
+    name = html.escape(name or "Student")
     if connected:
+        model = html.escape(st.session_state.get("ollama_model", "Gemma 4"))
         ollama_chip = (
             '<span class="omni-chip omni-chip-neon" '
             'style="animation:pulse-neon 2s ease-in-out infinite;">'
-            '&#9679; gemma4:e4b &mdash; ONLINE</span>'
+            f'&#9679; {model} &mdash; ONLINE</span>'
         )
     else:
         ollama_chip = '<span class="omni-chip omni-chip-red">&#9679; Gemma 4 &mdash; OFFLINE</span>'
@@ -875,6 +879,7 @@ def render_welcome_banner(name: str = "Kowshi") -> None:
 def render_exam_readiness_hero(overall: float = 0.0, days_left: int = 0,
                                 streak: int = 0, weak_count: int = 0,
                                 subject: str = "CS") -> None:
+    subject = html.escape(str(subject))
     pct = int(overall)
     r_color = "#39FF14" if pct >= 75 else "#D4A24C" if pct >= 50 else "#FF4757"
     d_color = "#FF4757" if days_left <= 7 else "#FFB830" if days_left <= 14 else "#F0F4F8"
@@ -940,7 +945,7 @@ def render_chapter_bars(chapter_scores: list) -> None:
         unsafe_allow_html=True,
     )
     for i, ch in enumerate(chapter_scores[:8]):
-        name  = ch.get("chapter_name", ch.get("name", "Unknown"))
+        name  = html.escape(str(ch.get("chapter_name", ch.get("name", "Unknown"))))
         score = float(ch.get("score", 0))
         if score >= 75:
             color = "#39FF14"
@@ -1092,6 +1097,7 @@ def render_today_focus(topic: str = "", days_left: int = 0) -> None:
     """Urgency-aware daily focus card."""
     if not topic:
         return
+    topic = html.escape(topic)
     if days_left <= 7:
         urgency_color = "#FF4757"
         icon = "🔥"

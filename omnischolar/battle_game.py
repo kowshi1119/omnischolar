@@ -154,7 +154,6 @@ def _fetch_question(topic: str, difficulty: str, llm) -> dict | None:
 
 def _get_fallback_question(topic: str, difficulty: str) -> dict:
     """Local question bank — always works, no Ollama needed."""
-    import random
     bank = {
         "Data Structures": [
             {"question": "Which data structure uses LIFO (Last In, First Out)?",

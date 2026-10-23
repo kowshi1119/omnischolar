@@ -1,7 +1,9 @@
 [server]
+# No auth: keep the app on this machine. Set to 0.0.0.0 to share on a LAN.
+address = "localhost"
 maxUploadSize = 200
 maxMessageSize = 200
-enableXsrfProtection = false
+enableXsrfProtection = true
 
 [browser]
 gatherUsageStats = false
