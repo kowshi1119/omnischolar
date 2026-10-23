@@ -9,9 +9,8 @@ from conftest import APP_DIR
 
 APP = os.path.join(APP_DIR, "app.py")
 MODES = [
-    "LEARN", "REVISE", "TEST_ME", "FIND_WEAK_AREAS", "STUDY_PLAN", "THREE_A",
-    "PAST_PAPER", "ADVANCED_STUDY_PLAN", "TEACHER", "WEAKNESS",
-    "VIRTUAL_TEACHER", "BATTLE_GAME",
+    "HOME", "LEARN", "REVISE", "TEST_ME", "VIRTUAL_TEACHER", "PAST_PAPER",
+    "BATTLE_GAME", "WEAKNESS", "STUDY_PLAN", "TEACHER", "THREE_A", "NOTES", "SETTINGS",
 ]
 
 
@@ -43,3 +42,33 @@ def test_score_quiz():
     assert ns["_score_quiz"](quiz_json, "1:B 2:B") == (1, 2)
     shown = ns["_quiz_markdown"](quiz_json)
     assert "**1. Base case?**" in shown and "correct_answer" not in shown
+
+
+def test_test_me_generates_scores_and_saves(monkeypatch):
+    import json
+    import database
+    from ollama_client import OllamaClient
+
+    quiz = {"questions": [
+        {"question_text": "Q1: Base case?", "options": ["A. loop", "B. stop condition", "C. call", "D. none"],
+         "correct_answer": "B", "explanation": "It stops recursion."},
+        {"question_text": "Stack holds?", "options": ["A. frames", "B. files", "C. pages", "D. fonts"],
+         "correct_answer": "A", "explanation": "Each call pushes a frame."},
+    ]}
+    monkeypatch.setattr(OllamaClient, "chat", lambda self, *a, **kw: json.dumps(quiz))
+
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["mode"] = "TEST_ME"
+    at.run()
+    at.text_input[0].set_value("Recursion")
+    at.button(key="FormSubmitter:tm_setup-Generate quiz").click().run()
+    assert not at.exception, at.exception
+    assert [r.label for r in at.radio] == ["**1.** Base case?", "**2.** Stack holds?"]  # "Q1:" stripped
+
+    at.radio[0].set_value("B. stop condition")
+    at.radio[1].set_value("C. pages")
+    at.button(key="FormSubmitter:tm_answers-Check answers").click().run()
+    assert not at.exception, at.exception
+    assert at.metric[-1].value == "1/2"
+    history = database.get_quiz_history(at.session_state["student_id"])
+    assert history and history[0][:3] == ("Recursion", 1, 2)

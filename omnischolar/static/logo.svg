@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="40" viewBox="0 0 220 40" role="img" aria-label="OmniScholar">
+  <polygon points="20,3 35,11.5 35,28.5 20,37 5,28.5 5,11.5" fill="none" stroke="#00B4A6" stroke-width="2.5"/>
+  <polygon points="20,11 27.5,15.5 27.5,24.5 20,29 12.5,24.5 12.5,15.5" fill="#00B4A6" opacity="0.85"/>
+  <text x="46" y="27" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="19" font-weight="700" fill="#F0F4F8" letter-spacing="0.5">Omni<tspan fill="#00D4C8">Scholar</tspan></text>
+</svg>

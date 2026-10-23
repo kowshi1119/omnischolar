@@ -109,7 +109,7 @@ def render_dr_omni_greeting_card(
         _html.escape(str(name)),
         '! \U0001f44b</div>',
         '<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.6rem;'
-        'color:#3A5060;margin-top:2px;">',
+        'color:#7A8FA3;margin-top:2px;">',
         days_text,
         '</div></div></div>',
         # Today's focus box
@@ -117,7 +117,7 @@ def render_dr_omni_greeting_card(
         'border-left:2px solid #00B4A6;border-radius:0 6px 6px 0;'
         'padding:7px 10px;margin-bottom:10px;">',
         '<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.55rem;'
-        'color:#3A5060;letter-spacing:0.15em;text-transform:uppercase;'
+        'color:#7A8FA3;letter-spacing:0.15em;text-transform:uppercase;'
         'margin-bottom:3px;">TODAY\'S FOCUS</div>',
         '<div style="font-family:\'DM Sans\',sans-serif;font-size:0.8rem;'
         'color:#F0F4F8;font-weight:500;">',
@@ -135,7 +135,7 @@ def render_dr_omni_greeting_card(
         '&#9646;&#9646; Pause</button>',
         '<button onclick="return false;" style="background:transparent;'
         'border:1px solid rgba(0,180,166,0.1);border-radius:10px;padding:3px 7px;'
-        'color:#3A5060;font-size:0.65rem;cursor:pointer;">'
+        'color:#7A8FA3;font-size:0.65rem;cursor:pointer;">'
         '0.75&#215;</button>',
         '<button onclick="return false;" style="background:rgba(0,180,166,0.1);'
         'border:1px solid rgba(0,180,166,0.3);border-radius:10px;padding:3px 7px;'
@@ -143,7 +143,7 @@ def render_dr_omni_greeting_card(
         '1&#215;</button>',
         '<button onclick="return false;" style="background:transparent;'
         'border:1px solid rgba(0,180,166,0.1);border-radius:10px;padding:3px 7px;'
-        'color:#3A5060;font-size:0.65rem;cursor:pointer;">'
+        'color:#7A8FA3;font-size:0.65rem;cursor:pointer;">'
         '1.5&#215;</button>',
         '</div></div>',
     ]

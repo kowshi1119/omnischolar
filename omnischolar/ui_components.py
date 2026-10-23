@@ -23,7 +23,7 @@ COLORS = {
     "danger":         "#FF4757",
     "text_primary":   "#F0F4F8",
     "text_secondary": "#8899AA",
-    "text_dim":       "#3A5060",
+    "text_dim":       "#7A8FA3",
     "border":         "rgba(0,180,166,0.15)",
     "border_gold":    "rgba(212,162,76,0.3)",
     # Backward-compat aliases — do not remove
@@ -45,18 +45,12 @@ COLORS = {
 # ── Premium CSS injection ──────────────────────────────────────────────────────
 
 def inject_premium_css():
-    # Permissions-Policy meta to reduce browser console noise
-    st.markdown("""
-    <meta http-equiv="Permissions-Policy"
-      content="ambient-light-sensor=(), battery=(), camera=(),
-               microphone=(), geolocation=()">
-    """, unsafe_allow_html=True)
     st.markdown("""
     <style>
     /* ══════════════════════════════════════
        FONTS
     ══════════════════════════════════════ */
-    @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,700;1,9..144,400&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;600&family=Noto+Sans+Sinhala:wght@400;600&family=Noto+Sans+Tamil:wght@400;600&display=swap');
+    /* Fonts are vendored in static/fonts and registered in .streamlit/config.toml */
 
     /* ══════════════════════════════════════
        DESIGN TOKENS
@@ -73,11 +67,11 @@ def inject_premium_css():
       --color-danger:         #FF4757;
       --color-text-primary:   #F0F4F8;
       --color-text-secondary: #8899AA;
-      --color-text-dim:       #3A5060;
+      --color-text-dim:       #7A8FA3;
       --color-border:         rgba(0,180,166,0.15);
       --color-border-gold:    rgba(212,162,76,0.3);
       --font-display:         'Fraunces', serif;
-      --font-sans:            'DM Sans', sans-serif;
+      --font-sans:            'DM Sans', 'Noto Sans Sinhala', 'Noto Sans Tamil', sans-serif;
       --font-mono:            'JetBrains Mono', monospace;
       --font-sinhala:         'Noto Sans Sinhala', sans-serif;
       --font-tamil:           'Noto Sans Tamil', sans-serif;
@@ -427,7 +421,8 @@ def inject_premium_css():
     /* ══════════════════════════════════════
        HIDE STREAMLIT UI
     ══════════════════════════════════════ */
-    #MainMenu, footer, header { visibility: hidden !important; }
+    /* Hide only the toolbar: a bare `header` rule also hid nav section titles and the mobile sidebar toggle */
+    #MainMenu, footer, [data-testid="stToolbar"] { visibility: hidden !important; }
     .stDeployButton { display: none !important; }
     [data-testid="stToolbar"] { display: none !important; }
 
@@ -723,6 +718,10 @@ def inject_premium_css():
             transition-duration: 0.01ms !important;
         }
     }
+    /* Transparent top bar so it doesn't paint over content; tighter top spacing */
+    [data-testid="stHeader"] { background: transparent !important; }
+    .block-container { padding-top: 2.5rem !important; max-width: 1200px; }
+
     @media (max-width: 768px) {
         .omni-seal { display: none !important; }  /* fixed badge covers content */
         .omni-card > div { flex-wrap: wrap; }
@@ -817,7 +816,7 @@ def render_ollama_status_chip(connected: bool, model: str = "gemma4:e4b") -> Non
         f'font-family:\'JetBrains Mono\',monospace;{anim_style}'
         f'margin-bottom:4px;">'
         f'<span style="font-size:0.72rem;font-weight:600;color:{color};">{label}</span>'
-        f'<span style="font-size:0.58rem;color:#3A5060;letter-spacing:0.04em;">Local inference · 100% offline</span>'
+        f'<span style="font-size:0.58rem;color:#7A8FA3;letter-spacing:0.04em;">Local inference · 100% offline</span>'
         f'{hint}'
         f'</div>',
         unsafe_allow_html=True,
@@ -879,7 +878,7 @@ def render_welcome_banner(name: str = "Student") -> None:
         f'margin-bottom:16px;">'
         f'<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;">'
         f'<div>'
-        f'<div style="font-family:var(--font-mono);font-size:0.58rem;color:#3A5060;'
+        f'<div style="font-family:var(--font-mono);font-size:0.58rem;color:#7A8FA3;'
         f'letter-spacing:0.22em;text-transform:uppercase;margin-bottom:6px;">WELCOME BACK</div>'
         f'<div style="font-family:var(--font-display);font-size:2rem;font-weight:700;'
         f'color:#F0F4F8;letter-spacing:-0.02em;line-height:1.1;margin-bottom:6px;">{name}</div>'

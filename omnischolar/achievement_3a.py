@@ -14,6 +14,8 @@ from datetime import date, datetime
 
 import streamlit as st
 
+from nav import go
+
 from al_config import STREAM_FOLDER_NAMES, SUBJECT_FILE_SLUGS
 from prompt import PAPER_SUMMARIZER_PROMPT, PREDICTION_ENGINE_PROMPT, CURRICULUM_ALIGNMENT_PROMPT
 from ui_components import (
@@ -681,7 +683,7 @@ def _render_readiness_ring(
       <div style="margin-bottom:12px;">
         <div style="
           font-family:'JetBrains Mono',monospace;
-          font-size:0.58rem; color:#3A5060;
+          font-size:0.58rem; color:#7A8FA3;
           letter-spacing:0.2em; text-transform:uppercase;
           margin-bottom:5px;">
           PREDICTED GRADE
@@ -877,7 +879,7 @@ def _render_3a_dashboard(student: dict, db, llm):
                 </div>
                 <div style="
                   font-family:'JetBrains Mono',monospace;
-                  font-size:0.6rem; color:#3A5060;">
+                  font-size:0.6rem; color:#7A8FA3;">
                   {freq}/10 past papers
                 </div>
               </div>
@@ -899,7 +901,7 @@ def _render_3a_dashboard(student: dict, db, llm):
     st.markdown("""
     <div style="
       font-family:'JetBrains Mono',monospace;
-      font-size:0.62rem; color:#3A5060;
+      font-size:0.62rem; color:#7A8FA3;
       letter-spacing:0.2em; text-transform:uppercase;
       margin:20px 0 10px;">
       QUICK ACTIONS
@@ -912,8 +914,7 @@ def _render_3a_dashboard(student: dict, db, llm):
             width="stretch",
             help="Practice with real A/L past papers",
         ):
-            st.session_state["mode"] = "PAST_PAPER"
-            st.rerun()
+            go("PAST_PAPER")
     with qcol2:
         if st.button(
             "🧪 Take a Quiz",
@@ -921,16 +922,14 @@ def _render_3a_dashboard(student: dict, db, llm):
             type="primary",
             help="Build quiz history for better readiness scoring",
         ):
-            st.session_state["mode"] = "TEST_ME"
-            st.rerun()
+            go("TEST_ME")
     with qcol3:
         if st.button(
             "📅 Update Study Plan",
             width="stretch",
             help="Regenerate your day-by-day plan",
         ):
-            st.session_state["mode"] = "STUDY_PLAN"
-            st.rerun()
+            go("STUDY_PLAN")
 
 
 # ── Main Entry Point ──────────────────────────────────────────────────────────
@@ -1017,7 +1016,7 @@ def render_3a_achievement_mode(student: dict, db, llm):
             <div style="
               font-family: 'JetBrains Mono', monospace;
               font-size: 0.58rem;
-              color: #3A5060;
+              color: #7A8FA3;
               letter-spacing: 0.2em;
               text-transform: uppercase;
               margin-bottom: 10px;">
@@ -1047,8 +1046,7 @@ def render_3a_achievement_mode(student: dict, db, llm):
                 type="primary",
                 width="stretch",
             ):
-                st.session_state["mode"] = "TEST_ME"
-                st.rerun()
+                go("TEST_ME")
         return
 
     # ── MODULE HEADER ─────────────────────────────────────────────────────────
@@ -1086,7 +1084,7 @@ def render_3a_achievement_mode(student: dict, db, llm):
           <div style="
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.58rem;
-            color: #3A5060;
+            color: #7A8FA3;
             letter-spacing: 0.2em;
             text-transform: uppercase;
             margin-bottom: 6px;">
@@ -1102,7 +1100,7 @@ def render_3a_achievement_mode(student: dict, db, llm):
           <div style="
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.65rem;
-            color: #3A5060;
+            color: #7A8FA3;
             margin-top: 4px;">
             Goal: 3A passes
           </div>

@@ -5,6 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import json
 import re
+import threading
 import uuid
 from datetime import date, datetime, timedelta
 
@@ -12,31 +13,26 @@ import streamlit as st
 
 st.set_page_config(
     page_title="OmniScholar",
-    page_icon="&#x2B21;",
+    page_icon=":material/school:",
     layout="wide",
     initial_sidebar_state="auto",  # collapsed on phones, open on desktop
 )
 
+import nav
 from config import APP_DEBUG, OLLAMA_HOST, OLLAMA_MODEL
 from database import Database, init_db, save_student, save_quiz_result, get_quiz_history
 from ollama_client import OllamaClient
-from rag import ingest_pdf, retrieve_context_hybrid, get_confidence_score
+from rag import ingest_pdf, retrieve_context_hybrid, get_confidence_score, get_retrieval_coverage
 from prompt import SYSTEM_PROMPT
 from ui_components import (
     inject_premium_css,
     render_grounding_indicator,
-    render_thinking_state,
     render_welcome_banner,
     render_exam_readiness_hero,
     render_chapter_bars,
     render_urgency_countdown,
-    render_gemma_badges,
-    render_impact_counter,
-    render_system_status,
     render_today_focus,
-    render_ollama_status_chip,
     render_offline_seal,
-    render_offline_confirmed_toast,
 )
 from achievement_3a import render_3a_achievement_mode, calculate_readiness
 from past_paper import render_past_paper_mode
@@ -48,6 +44,7 @@ from battle_game import render_battle_game_mode
 from al_config import STREAM_SUBJECTS, STREAM_DEFAULT_SUBJECTS, STUDENT_TYPES
 
 inject_premium_css()
+st.logo(os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "logo.svg"), size="large")
 
 
 def _safe_format(template: str, **kwargs) -> str:
@@ -62,39 +59,49 @@ def _safe_format(template: str, **kwargs) -> str:
     return result
 
 
-init_db()
-db = Database()
+@st.cache_resource
+def _get_db() -> Database:
+    # Schema migrations run once per server process, not on every rerun
+    init_db()
+    return Database()
 
-if "_llm" not in st.session_state:
-    st.session_state["_llm"] = OllamaClient()
-_llm = st.session_state["_llm"]
 
-# Primary modes — always visible in sidebar (THREE_A is a dedicated button)
+@st.cache_resource
+def _get_llm() -> OllamaClient:
+    llm = OllamaClient()
+    # Load the model into RAM in the background so the first answer isn't a cold start
+    threading.Thread(target=llm.warmup, daemon=True).start()
+    return llm
+
+
+db = _get_db()
+_llm = _get_llm()
+
+# Navigation registry: (title, mode key). Keys are what modules pass to nav.go().
 _PRIMARY_MODES = [
-    ("📖 Learn",           "LEARN"),
-    ("🔄 Revise",          "REVISE"),
-    ("📝 Test Me",         "TEST_ME"),
-    ("🤖 Virtual Teacher", "VIRTUAL_TEACHER"),
+    ("Home",            "HOME"),
+    ("Learn",           "LEARN"),
+    ("Revise",          "REVISE"),
+    ("Test Me",         "TEST_ME"),
+    ("Virtual Teacher", "VIRTUAL_TEACHER"),
 ]
 
-# Secondary modes — under "⋯ Tools" expander
 _SECONDARY_MODES = [
-    ("🔍 Find Weak Areas",     "FIND_WEAK_AREAS"),
-    ("📅 Study Plan",          "STUDY_PLAN"),
-    ("📄 Past Paper Battle",   "PAST_PAPER"),
-    ("⚔️  CS Battle",          "BATTLE_GAME"),
-    ("👩‍🏫 Teacher Mode",      "TEACHER"),
-    ("⚠️ Weakness Analysis",   "WEAKNESS"),
-    ("🗓️ Advanced Study Plan", "ADVANCED_STUDY_PLAN"),
+    ("Past Papers",  "PAST_PAPER"),
+    ("CS Battle",    "BATTLE_GAME"),
+    ("Weak Areas",   "WEAKNESS"),
+    ("Study Plan",   "STUDY_PLAN"),
+    ("Teacher Mode", "TEACHER"),
 ]
 
-# Combined for internal dispatch (THREE_A handled via dedicated button)
-MODES = _PRIMARY_MODES + _SECONDARY_MODES
-
-_DELEGATED = {
-    "THREE_A", "PAST_PAPER", "ADVANCED_STUDY_PLAN", "TEACHER",
-    "WEAKNESS", "VIRTUAL_TEACHER", "BATTLE_GAME", "STUDY_PLAN",
+_ICONS = {
+    "HOME": "home", "LEARN": "school", "REVISE": "autorenew", "TEST_ME": "quiz",
+    "VIRTUAL_TEACHER": "smart_toy", "PAST_PAPER": "description", "BATTLE_GAME": "bolt",
+    "WEAKNESS": "troubleshoot", "STUDY_PLAN": "calendar_month", "TEACHER": "co_present",
+    "THREE_A": "emoji_events", "NOTES": "folder_open", "SETTINGS": "settings",
 }
+
+_LANGUAGES = ["English", "Sinhala", "Tamil"]
 
 
 def _init_session():
@@ -108,8 +115,6 @@ def _init_session():
         "student_type": "Undergraduate",
         "al_stream": "",
         "al_subjects": [],
-        "mode": "LEARN",
-        "chat_history": [],
         "rag_docs": [],
         "profile_saved": False,
     }
@@ -127,13 +132,15 @@ def _init_session():
             loaded = db.get_latest_student_profile()
 
         if loaded:
+            st.session_state["profile_saved"] = True
             st.session_state["student_id"] = loaded.get("student_id") or st.session_state["student_id"]
             st.session_state["name"] = loaded.get("name") or st.session_state["name"]
             st.session_state["subject"] = loaded.get("subject") or st.session_state["subject"]
             st.session_state["exam_date"] = loaded.get("exam_date") or st.session_state["exam_date"]
             st.session_state["weak_areas"] = loaded.get("weak_areas") or st.session_state["weak_areas"]
             # DB rows may hold lowercase defaults like "english"
-            st.session_state["preferred_language"] = (loaded.get("preferred_language") or "English").title()
+            _lang = (loaded.get("preferred_language") or "English").title()
+            st.session_state["preferred_language"] = _lang if _lang in _LANGUAGES else "English"
             st.session_state["student_type"] = loaded.get("student_type") or st.session_state["student_type"]
             st.session_state["al_stream"] = loaded.get("al_stream") or st.session_state["al_stream"]
             _loaded_subjects = loaded.get("al_subjects") or []
@@ -148,13 +155,16 @@ def _init_session():
 _init_session()
 
 
+def _exam_date(value: str) -> date:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except Exception:
+        return date.today() + timedelta(days=30)
+
+
 def _student():
     exam_date_str = st.session_state.get("exam_date", str(date.today() + timedelta(days=30)))
-    try:
-        exam_dt = datetime.strptime(exam_date_str, "%Y-%m-%d").date()
-    except Exception:
-        exam_dt = date.today() + timedelta(days=30)
-    days_remaining = max((exam_dt - date.today()).days, 1)
+    days_remaining = max((_exam_date(exam_date_str) - date.today()).days, 1)
     return {
         "student_id": st.session_state["student_id"],
         "name": st.session_state["name"],
@@ -169,403 +179,112 @@ def _student():
     }
 
 
-def _render_system_status():
-    render_system_status(ollama_ok=True)
+def _save_profile() -> None:
+    s = _student()
+    save_student({**s, "al_subjects": json.dumps(s.get("al_subjects") or [])})
+    st.session_state["profile_saved"] = True
 
 
-def _render_sidebar():
+@st.cache_data(ttl=60, show_spinner=False)
+def _progress(student_id: str, subject: str) -> dict:
+    """All dashboard numbers in one place (was ~10 DB round-trips per rerun).
+
+    Cleared via _progress.clear() whenever a quiz is saved.
+    """
+    def _safe(fn, default):
+        try:
+            return fn()
+        except Exception:
+            return default
+
+    return {
+        "history": _safe(lambda: get_quiz_history(student_id) or [], []),
+        "streak": _safe(lambda: db.get_study_streak(student_id) or 0, 0),
+        "weak": _safe(lambda: db.get_weak_concepts(student_id) or [], []),
+        "resolved": _safe(lambda: db.get_weak_concepts(student_id, resolved=True) or [], []),
+        "chapters": _safe(lambda: db.get_chapter_scores_by_subject(student_id, subject) or [], []),
+    }
+
+
+# ── Profile dialog ────────────────────────────────────────────────────────────
+
+@st.dialog("Your profile")
+def _profile_dialog():
+    st.caption("Used to personalise explanations, quizzes and your study plan.")
+    name = st.text_input("Your name", value=st.session_state["name"])
+    subject = st.text_input("Main subject", value=st.session_state["subject"])
+    exam_date = st.date_input("Exam date", value=_exam_date(st.session_state["exam_date"]),
+                              min_value=date.today())
+    weak = st.text_area("Topics you find hard (comma-separated)",
+                        value=st.session_state.get("weak_areas", ""), height=80)
+    _cur_type = st.session_state.get("student_type", "Undergraduate")
+    student_type = st.radio("I am a", STUDENT_TYPES, horizontal=True,
+                            index=STUDENT_TYPES.index(_cur_type) if _cur_type in STUDENT_TYPES else 1)
+
+    al_stream, al_subjects = "", []
+    if student_type == "A/L Student":
+        streams = list(STREAM_SUBJECTS.keys())
+        cur = st.session_state.get("al_stream") or streams[0]
+        al_stream = st.selectbox("A/L stream", streams, index=streams.index(cur) if cur in streams else 0)
+        options = STREAM_SUBJECTS.get(al_stream, [])
+        current = [s for s in (st.session_state.get("al_subjects") or []) if s in options]
+        al_subjects = st.multiselect("Your three subjects", options,
+                                     default=current or STREAM_DEFAULT_SUBJECTS.get(al_stream, []),
+                                     max_selections=3)
+
+    if st.button("Save profile", type="primary", width="stretch"):
+        if not name.strip() or not subject.strip():
+            st.error("Name and subject are required.")
+            return
+        st.session_state.update({
+            "name": name.strip(), "subject": subject.strip(),
+            "exam_date": exam_date.strftime("%Y-%m-%d"), "weak_areas": weak.strip(),
+            "student_type": student_type, "al_stream": al_stream, "al_subjects": al_subjects,
+        })
+        _save_profile()
+        _progress.clear()
+        st.toast("Profile saved", icon=":material/check_circle:")
+        st.rerun()
+
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+
+def _render_sidebar(ollama_ok: bool):
+    s = _student()
     with st.sidebar:
-        st.sidebar.markdown(
-            '<div class="omni-header">⬡ OMNISCHOLAR</div>',
-            unsafe_allow_html=True
-        )
-        st.sidebar.markdown(
-            '<div class="omni-subtitle">OFFLINE · MULTILINGUAL · AI</div>',
-            unsafe_allow_html=True
-        )
-        st.divider()
-        st.markdown("**Profile**")
-        st.session_state["name"] = st.text_input("Your Name", value=st.session_state["name"], key="_sb_name")
-        st.session_state["subject"] = st.text_input("Subject", value=st.session_state["subject"], key="_sb_subject")
-        try:
-            _exam_val = datetime.strptime(st.session_state["exam_date"], "%Y-%m-%d").date()
-        except Exception:
-            _exam_val = date.today() + timedelta(days=30)
-        st.session_state["exam_date"] = st.date_input("Exam Date", value=_exam_val, key="_sb_exam_date").strftime("%Y-%m-%d")
-        st.session_state["weak_areas"] = st.text_area("Weak Areas (comma-separated)", value=st.session_state.get("weak_areas", ""), height=80, key="_sb_weak")
-        st.session_state["preferred_language"] = st.selectbox(
-            "Language", ["English", "Sinhala", "Tamil"],
-            index=["English", "Sinhala", "Tamil"].index(st.session_state.get("preferred_language", "English"))
-            if st.session_state.get("preferred_language") in ("English", "Sinhala", "Tamil") else 0,
-            key="_sb_lang",
-        )
-
-        # ── A/L Profile Fields ─────────────────────────────────────────────
-        st.markdown("**Student Type**")
-        _cur_stype = st.session_state.get("student_type", "Undergraduate")
-        _stype_idx = STUDENT_TYPES.index(_cur_stype) if _cur_stype in STUDENT_TYPES else 1
-        _new_stype = st.radio(
-            "student_type_radio",
-            STUDENT_TYPES,
-            index=_stype_idx,
-            key="_sb_student_type",
-            label_visibility="collapsed",
-            horizontal=True,
-        )
-        st.session_state["student_type"] = _new_stype
-
-        if _new_stype == "A/L Student":
-            _stream_options = list(STREAM_SUBJECTS.keys())
-            _cur_stream = st.session_state.get("al_stream", "") or _stream_options[0]
-            if _cur_stream not in _stream_options:
-                _cur_stream = _stream_options[0]
-            _new_stream = st.selectbox(
-                "A/L Stream",
-                _stream_options,
-                index=_stream_options.index(_cur_stream),
-                key="_sb_al_stream",
-            )
-            if _new_stream != st.session_state.get("al_stream", ""):
-                st.session_state["al_stream"] = _new_stream
-                st.session_state["al_subjects"] = list(
-                    STREAM_DEFAULT_SUBJECTS.get(_new_stream, [])
-                )
+        with st.container(border=True):
+            st.markdown(f"**{s['name']}**  \n{s['subject']}")
+            exam = _exam_date(s["exam_date"])
+            if exam < date.today():
+                st.caption(":orange[Exam date has passed — update it in your profile]")
             else:
-                st.session_state["al_stream"] = _new_stream
+                st.caption(f"{(exam - date.today()).days} days to exam · {exam:%d %b %Y}")
+            if st.button("Edit profile", icon=":material/edit:", width="stretch", key="btn_edit_profile"):
+                _profile_dialog()
 
-            _all_subjects = STREAM_SUBJECTS.get(_new_stream, [])
-            _cur_subjects = st.session_state.get("al_subjects", [])
-            if not isinstance(_cur_subjects, list):
-                _cur_subjects = []
-            _valid_defaults = [s for s in _cur_subjects if s in _all_subjects]
-            _new_subjects = st.multiselect(
-                "Subjects (select your 3)",
-                _all_subjects,
-                default=_valid_defaults,
-                key="_sb_al_subjects",
-            )
-            st.session_state["al_subjects"] = _new_subjects
-        else:
-            # Undergraduate — clear A/L fields
-            st.session_state["al_stream"] = ""
-            st.session_state["al_subjects"] = []
-
-        if st.button("Save Profile", width="stretch"):
-            s = _student()
-            _al_subjects_json = json.dumps(s.get("al_subjects") or [])
-            save_student({
-                "student_id":         s["student_id"],
-                "name":               s["name"],
-                "subject":            s["subject"],
-                "exam_date":          s["exam_date"],
-                "preferred_language": s["preferred_language"],
-                "weak_areas":         s.get("weak_areas", ""),
-                "student_type":       s.get("student_type", "Undergraduate"),
-                "al_stream":          s.get("al_stream", ""),
-                "al_subjects":        _al_subjects_json,
-            })
-            st.session_state["profile_saved"] = True
-            st.success("Profile saved!")
-        st.divider()
-        st.markdown("**Upload Study Materials**")
-        pdfs = st.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True, key="_sb_pdfs")
-        if pdfs:
-            for pdf in pdfs:
-                if pdf.name not in st.session_state.get("rag_docs", []):
-                    with st.spinner(f"Ingesting {pdf.name}..."):
-                        try:
-                            _subj = st.session_state.get("subject", "General")
-                            _lang = st.session_state.get("preferred_language", "English")
-                            _al_stream = st.session_state.get("al_stream") or None
-                            _al_subj = (st.session_state.get("al_subjects") or [None])[0] or None
-                            ingest_pdf(pdf, _subj, _lang, al_stream=_al_stream, al_subject=_al_subj)
-                            st.session_state["rag_docs"].append(pdf.name)
-                        except Exception as e:
-                            st.warning(f"Could not ingest {pdf.name}: {e}")
-            db.update_student_pdf(st.session_state["student_id"], ",".join(st.session_state["rag_docs"]))
-            if st.session_state["rag_docs"]:
-                st.success(f"{len(st.session_state['rag_docs'])} PDF(s) loaded")
-        st.divider()
-        _render_system_status()
-        _cur_mode = st.session_state["mode"]
-        _PRIMARY_MODE_KEYS = [m[1] for m in _PRIMARY_MODES]
-
-        # ── Section 1: STUDY ─────────────────────────────────────────────
-        st.sidebar.markdown(
-            '<div class="omni-section-label">── STUDY ──</div>',
-            unsafe_allow_html=True,
+        # Language is a widget bound to session state; saving on change keeps it across restarts
+        st.segmented_control(
+            "Answer language", _LANGUAGES, key="preferred_language", required=True,
+            on_change=_save_profile, width="stretch",
         )
 
-        for _label, _mode_val in _PRIMARY_MODES:
-            _is_active = (st.session_state["mode"] == _mode_val)
-            if st.sidebar.button(
-                _label,
-                key=f"nav_btn_{_mode_val}",
-                width="stretch",
-                type="primary" if _is_active else "secondary",
-            ):
-                if st.session_state["mode"] != _mode_val:
-                    st.session_state["mode"] = _mode_val
-                    st.session_state["chat_history"] = []
-                    for _k in [
-                        "vt_lesson", "vt_topic", "vt_phase",
-                        "vt_mid_answered", "vt_answers",
-                        "test_questions", "test_idx",
-                        "battle_state", "pp_questions",
-                    ]:
-                        st.session_state.pop(_k, None)
-                    st.rerun()
-
-        # ── Section 2: MORE ──────────────────────────────────────────────
-        st.sidebar.markdown(
-            '<div class="omni-section-label">── MORE ──</div>',
-            unsafe_allow_html=True,
-        )
-
-        _sec_modes = [m for m in _SECONDARY_MODES]
-        _sec_mode_vals = [m[1] for m in _sec_modes]
-        with st.sidebar.expander(
-            "⋯ Tools",
-            expanded=(st.session_state["mode"] in _sec_mode_vals),
-        ):
-            for _label, _mode_val in _sec_modes:
-                _is_active = (st.session_state["mode"] == _mode_val)
-                if st.button(
-                    _label,
-                    key=f"nav_btn_{_mode_val}",
-                    width="stretch",
-                    type="primary" if _is_active else "secondary",
-                ):
-                    if st.session_state["mode"] != _mode_val:
-                        st.session_state["mode"] = _mode_val
-                        st.session_state["chat_history"] = []
-                        for _k in [
-                            "vt_lesson", "vt_topic", "vt_phase",
-                            "vt_mid_answered", "vt_answers",
-                            "test_questions", "test_idx",
-                            "battle_state", "pp_questions",
-                        ]:
-                            st.session_state.pop(_k, None)
-                        st.rerun()
-
-        # Active mode teal highlight via CSS
-        _active_mode = st.session_state["mode"]
-        st.sidebar.markdown(f"""
-        <style>
-        [data-testid="stSidebar"]
-        [data-testid="stButton"][key="nav_btn_{_active_mode}"] > button {{
-          border-color: #00B4A6 !important;
-          color: #00B4A6 !important;
-          background: rgba(0,180,166,0.1) !important;
-        }}
-        </style>
-        """, unsafe_allow_html=True)
-
-        # ── Section 3: A/L ACHIEVEMENT (conditional) ─────────────────────────
-        _student_type_sb = st.session_state.get("student_type", "Undergraduate")
-
-        if _student_type_sb == "A/L Student":
-            # Gold gradient separator + section label
-            st.sidebar.markdown("""
-            <div style="
-              height: 1px;
-              background: linear-gradient(90deg,
-                transparent, rgba(212,162,76,0.4), transparent);
-              margin: 14px 0 10px;">
-            </div>
-            <div style="
-              font-family: 'JetBrains Mono', monospace;
-              font-size: 0.58rem;
-              color: #3A5060;
-              letter-spacing: 0.22em;
-              text-transform: uppercase;
-              padding: 0 4px 8px;
-              display: flex;
-              align-items: center;
-              gap: 6px;">
-              <span style="color:#D4A24C;">🏆</span>
-              A/L ACHIEVEMENT
-            </div>
-            """, unsafe_allow_html=True)
-
-            # Get quiz count for lock/unlock state
-            _quiz_count = 0
-            try:
-                _qh_sb = db.get_quiz_history(
-                    st.session_state.get("student_id", "")) or []
-                _quiz_count = len(_qh_sb)
-            except Exception:
-                pass
-
-            _is_unlocked = _quiz_count >= 3
-
-            if _is_unlocked:
-                if st.sidebar.button(
-                    "🏆 3A Achievement Engine",
-                    width="stretch",
-                    help="Elo IRT readiness · DoE grade calibration",
-                    key="btn_3a_achievement",
-                ):
-                    st.session_state["mode"] = "THREE_A"
-                    st.session_state["chat_history"] = []
-                    st.rerun()
-                # Gold highlight when active
-                if st.session_state.get("mode") == "THREE_A":
-                    st.sidebar.markdown("""
-                    <style>
-                    [data-testid="stSidebar"]
-                    [data-testid="stButton"]:last-of-type > button {
-                      background: rgba(212,162,76,0.12) !important;
-                      border-color: rgba(212,162,76,0.5) !important;
-                      color: #D4A24C !important;
-                    }
-                    </style>
-                    """, unsafe_allow_html=True)
-            else:
-                # Locked — show progress toward unlock
-                _needed = max(0, 3 - _quiz_count)
-                st.sidebar.markdown(f"""
-                <div style="
-                  background: rgba(212,162,76,0.04);
-                  border: 1px solid rgba(212,162,76,0.15);
-                  border-radius: 10px;
-                  padding: 10px 12px;
-                  margin: 2px 0;">
-                  <div style="
-                    font-family: 'DM Sans', sans-serif;
-                    font-size: 0.8rem;
-                    color: #3A5060;
-                    margin-bottom: 6px;">
-                    🔒 3A Achievement Engine
-                  </div>
-                  <div style="
-                    font-family: 'JetBrains Mono', monospace;
-                    font-size: 0.62rem;
-                    color: #D4A24C;
-                    opacity: 0.7;">
-                    Complete {_needed} more quiz{"" if _needed == 1 else "zes"} to unlock
-                  </div>
-                  <div style="
-                    height: 3px;
-                    background: rgba(212,162,76,0.1);
-                    border-radius: 2px;
-                    margin-top: 8px;
-                    overflow: hidden;">
-                    <div style="
-                      height: 100%;
-                      width: {(_quiz_count / 3) * 100:.0f}%;
-                      background: #D4A24C;
-                      border-radius: 2px;">
-                    </div>
-                  </div>
-                  <div style="
-                    font-family: 'JetBrains Mono', monospace;
-                    font-size: 0.55rem;
-                    color: #2A3A4A;
-                    margin-top: 4px;
-                    text-align: right;">
-                    {_quiz_count}/3 quizzes
-                  </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-        elif _student_type_sb == "Undergraduate":
-            # Subtle separator + simple progress button (no 3A engine for UG)
-            st.sidebar.markdown("""
-            <div style="
-              height: 1px;
-              background: rgba(0,180,166,0.08);
-              margin: 14px 0 10px;">
-            </div>
-            """, unsafe_allow_html=True)
-            if st.sidebar.button(
-                "📊 My Progress",
-                width="stretch",
-                help="View your study progress and readiness",
-                key="btn_progress_ug",
-            ):
-                st.session_state["mode"] = "THREE_A"
-                st.session_state["chat_history"] = []
-                st.rerun()
-
-        st.divider()
-        st.sidebar.markdown(
-            f'<div style="text-align:center;padding:6px;">'
-            f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:8px;'
-            f'color:#1A3050;letter-spacing:0.12em;">'
-            f'Model: {os.getenv("OLLAMA_MODEL", OLLAMA_MODEL)}</span></div>',
-            unsafe_allow_html=True,
-        )
-        try:
-            streak = db.get_study_streak(st.session_state["student_id"])
-        except Exception:
-            streak = 0
+        streak = _progress(s["student_id"], s["subject"])["streak"]
         if streak:
-            st.markdown(f"**{streak}-day streak**")
-        st.divider()
-        with st.expander("⚙️ Demo Controls", expanded=False):
-            if st.button("🔄 Reset Demo Data", key="btn_reset_demo"):
-                import subprocess
-                result = subprocess.run(
-                    [sys.executable, "seed_demo_data.py"],
-                    capture_output=True, text=True, cwd=os.path.dirname(os.path.abspath(__file__))
-                )
-                if result.returncode == 0:
-                    for key in list(st.session_state.keys()):
-                        del st.session_state[key]
-                    st.success("Demo data reset! Reloading...")
-                    st.rerun()
-                else:
-                    st.error(f"Reset failed: {result.stderr[:200]}")
+            st.caption(f":material/local_fire_department: {streak}-day study streak")
 
-            st.markdown("---")
+        model = st.session_state.get("ollama_model", OLLAMA_MODEL)
+        if ollama_ok:
+            st.caption(f":green[●] {model} · running locally")
+        else:
+            st.caption(":red[●] AI model offline · start `ollama serve`")
 
-            # Demo mode toggle
-            demo_mode = st.checkbox(
-                "🎬 Demo Mode",
-                value=st.session_state.get("demo_mode", False),
-                help="Optimize UI for video recording",
-            )
-            st.session_state["demo_mode"] = demo_mode
+    # First visit: ask for a profile once instead of showing the defaults
+    if not st.session_state.get("profile_saved") and not st.session_state.get("_onboarded"):
+        st.session_state["_onboarded"] = True
+        _profile_dialog()
 
-            if demo_mode:
-                _subj = st.session_state.get("subject", "")
-                _demo_topic = (
-                    "Deadlock" if "computer" in _subj.lower() or "cs" in _subj.lower() else
-                    "Cellular Respiration" if "biology" in _subj.lower() else
-                    "Newton's Laws" if "physics" in _subj.lower() else
-                    "Recursion"
-                )
-                st.info(f"🎬 Demo topic: **{_demo_topic}**")
-                st.session_state["demo_topic"] = _demo_topic
 
-            # WiFi Off simulation
-            wifi_off = st.checkbox(
-                "📵 Simulate WiFi Off",
-                value=st.session_state.get("wifi_demo_off", False),
-                help="Shows offline confirmation banner for demo",
-            )
-            st.session_state["wifi_demo_off"] = wifi_off
-
-    # Dr. Omni greeting card — bottom of sidebar
-    try:
-        from _new_avatar import render_dr_omni_greeting_card
-        _s = _student()
-        _today_topic = (
-            st.session_state.get("vt_topic")
-            or st.session_state.get("demo_topic")
-            or ""
-        )
-        _days = max(int(_s.get("days_remaining", 1)), 1)
-        render_dr_omni_greeting_card(
-            name=_s.get("name", "Student"),
-            topic=_today_topic,
-            days_left=_days,
-            emotion="idle",
-        )
-    except Exception:
-        pass  # Avatar never crashes the sidebar
-
+# ── LLM prompt building ───────────────────────────────────────────────────────
 
 def _build_system_prompt(student, context="", mode=""):
     base = _safe_format(
@@ -585,41 +304,61 @@ def _build_system_prompt(student, context="", mode=""):
     if mode:
         base += f"\n\n[MODE: {mode}]"
     if context:
-        base += f"\n\n[RETRIEVED CONTEXT]\n{context}"
+        base += (
+            "\n\n[RETRIEVED CONTEXT]\nEach passage starts with its [file page N] label. "
+            "Cite facts from it with that label. If the passages don't answer the "
+            f"question, say it is not in the student's notes.\n\n{context}"
+        )
     return base
+
+
+# Older turns beyond this are dropped: they overflow the 4K context and slow every answer
+_CHAT_HISTORY_TURNS = 8
 
 
 def _handle_chat_mode(mode, student):
     cfg = {
         "LEARN": {
-            "title": "Learn Mode",
-            "subtitle": "Deep, structured explanations with examples",
+            "title": "Learn",
+            "subtitle": "Structured explanations with examples, memory tips and citations from your notes.",
             "placeholder": f"What topic in {student['subject']} would you like to learn?",
-            "color": "#00D4FF",
         },
         "REVISE": {
-            "title": "Revise Mode",
-            "subtitle": "Quick summaries and key-point reinforcement",
+            "title": "Revise",
+            "subtitle": "Examiner-ready summaries and the mistakes students usually make.",
             "placeholder": f"Which {student['subject']} topic should we revise?",
-            "color": "#FFB800",
         },
     }[mode]
+    history_key = f"chat_{mode}"
+    history = st.session_state.setdefault(history_key, [])
 
-    st.markdown(f"<h2 style='color:{cfg['color']};'>{cfg['title']}</h2><p style='color:#A0B4D6;'>{cfg['subtitle']}</p>", unsafe_allow_html=True)
+    head, action = st.columns([5, 1], vertical_alignment="bottom")
+    head.title(cfg["title"])
+    head.caption(cfg["subtitle"])
+    if history and action.button("New chat", icon=":material/add_comment:", key=f"clear_{mode}"):
+        history.clear()
+        st.rerun()
 
-    for msg in st.session_state["chat_history"]:
+    if not history:
+        if st.session_state.get("rag_docs"):
+            st.info(f"Answers will cite your {len(st.session_state['rag_docs'])} uploaded document(s).",
+                    icon=":material/menu_book:")
+        else:
+            st.info("Tip: upload your lecture notes in **My Notes** so answers cite your own material.",
+                    icon=":material/lightbulb:")
+
+    for msg in history:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
     if prompt := st.chat_input(cfg["placeholder"]):
-        st.session_state["chat_history"].append({"role": "user", "content": prompt})
+        history.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        rag_context = ""
-        rag_sources = []
+        rag_context, rag_sources = "", []
         if st.session_state.get("rag_docs"):
-            with st.spinner("Searching study materials..."):
+            with st.spinner("Searching your notes..."):
                 try:
                     # For A/L students, filter RAG by the active subject in their stream
                     _al_subjects = student.get("al_subjects") or []
@@ -628,36 +367,45 @@ def _handle_chat_mode(mode, student):
                     else:
                         rag_context, rag_sources = retrieve_context_hybrid(prompt, subject=student["subject"])
                 except Exception:
-                    rag_context = ""
-                    rag_sources = []
+                    rag_context, rag_sources = "", []
 
-        sys_prompt = _build_system_prompt(student, rag_context, mode=mode)
-        messages = [{"role": "system", "content": sys_prompt}]
-        for m in st.session_state["chat_history"][:-1]:
-            messages.append(m)
+        messages = [{"role": "system", "content": _build_system_prompt(student, rag_context, mode=mode)}]
+        messages.extend(history[-_CHAT_HISTORY_TURNS - 1:-1])
         messages.append({"role": "user", "content": prompt})
 
         with st.chat_message("assistant"):
-            render_thinking_state()
-            placeholder = st.empty()
-            full_response = ""
-            try:
-                for chunk in _llm.stream(messages):
-                    full_response += chunk
-                    placeholder.markdown(full_response + "...")
-                placeholder.markdown(full_response)
-            except Exception as e:
-                full_response = f"Could not reach Ollama: {e}\n\nMake sure `ollama serve` is running with model `{OLLAMA_MODEL}`."
-                placeholder.markdown(full_response)
-
+            full_response = st.write_stream(_llm.stream(messages))
             if rag_context:
                 _conf = get_confidence_score(prompt, full_response, rag_sources, context=rag_context)
                 render_grounding_indicator(sources=rag_sources, level=_conf)
 
-        st.session_state["chat_history"].append({"role": "assistant", "content": full_response})
+        history.append({"role": "assistant", "content": full_response})
 
+
+# ── Test Me ───────────────────────────────────────────────────────────────────
 
 _LLM_ERROR_PREFIX = "[OmniScholar]"
+
+# Matches the fine-tuned model's TEST_ME schema, plus an explanation for instant feedback
+_QUIZ_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "questions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "question_text": {"type": "string"},
+                    "options": {"type": "array", "items": {"type": "string"}, "minItems": 4, "maxItems": 4},
+                    "correct_answer": {"type": "string", "enum": ["A", "B", "C", "D"]},
+                    "explanation": {"type": "string"},
+                },
+                "required": ["question_text", "options", "correct_answer", "explanation"],
+            },
+        }
+    },
+    "required": ["questions"],
+}
 
 
 def _score_quiz(quiz_text: str, user_answers: str) -> tuple:
@@ -677,7 +425,7 @@ def _score_quiz(quiz_text: str, user_answers: str) -> tuple:
 
 
 def _parse_quiz(quiz_text: str):
-    """Parse the fine-tuned model's TEST_ME JSON into questions, or None if it isn't JSON."""
+    """Parse the model's TEST_ME JSON into questions, or None if it isn't JSON."""
     match = re.search(r"\{.*\}", quiz_text, re.DOTALL)
     if not match:
         return None
@@ -687,9 +435,11 @@ def _parse_quiz(quiz_text: str):
         return None
     return [
         {
-            "text": q.get("question_text", ""),
+            # The model often numbers questions itself ("Q1: ..."); the UI adds its own numbers
+            "text": re.sub(r"^\s*Q?\d+\s*[:.)]\s*", "", q.get("question_text", "")),
             "options": q.get("options") or [],
             "answer": str(q.get("correct_answer", "")).strip()[:1].upper(),
+            "explanation": q.get("explanation", ""),
         }
         for q in questions if isinstance(q, dict)
     ] or None
@@ -706,140 +456,137 @@ def _quiz_markdown(quiz_text: str) -> str:
     return re.sub(r"(?im)^\s*\**\s*Answer\s*[:\-].*$", "", quiz_text)
 
 
+def _option_letter(option: str, index: int) -> str:
+    """'B. Stack' -> 'B'; falls back to position when the model omits the letter."""
+    m = re.match(r"\s*\(?([A-Da-d])[.):]\s", option)
+    return m.group(1).upper() if m else "ABCD"[index]
+
+
 def _handle_test_me(student):
-    st.markdown("<h2 style='color:#A855F7;'>Test Me</h2><p style='color:#A0B4D6;'>Challenge yourself with AI-generated questions.</p>", unsafe_allow_html=True)
-    topic = st.text_input("Topic to be tested on", placeholder=f"e.g. {student['subject']} Chapter 3", key="_tm_topic")
-    num_q = st.slider("Number of questions", 3, 10, 5, key="_tm_num")
-    if st.button("Generate Quiz", width="stretch"):
-        with st.spinner("Generating questions..."):
-            prompt_text = (
-                f"Create {num_q} multiple-choice quiz questions about '{topic}' "
-                f"for a {student['subject']} student. "
-                "Format each as:\nQ: ...\nA) ...\nB) ...\nC) ...\nD) ...\nAnswer: X"
+    st.title("Test Me")
+    st.caption("Retrieval practice: answer from memory, then see why each answer is right.")
+
+    with st.form("tm_setup", border=True):
+        c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
+        topic = c1.text_input("Topic", placeholder=f"e.g. {student['subject']} — recursion")
+        num_q = c2.number_input("Questions", min_value=3, max_value=10, value=5)
+        generate = st.form_submit_button("Generate quiz", type="primary", icon=":material/bolt:")
+
+    if generate:
+        topic = topic.strip() or student["subject"]
+        with st.spinner(f"Writing {num_q} questions on {topic}..."):
+            raw = _llm.chat(
+                [{"role": "user", "content": (
+                    f"Write {num_q} multiple-choice questions about '{topic}' for a "
+                    f"{student['subject']} student preparing for an exam. Options start with "
+                    "'A. ', 'B. ', 'C. ', 'D. '. Give a one-sentence explanation of the correct answer."
+                )}],
+                system_prompt=_build_system_prompt(student),
+                temperature=0.4,
+                format=_QUIZ_SCHEMA,
             )
-            try:
-                quiz_text = _llm.chat([{"role": "system", "content": _build_system_prompt(student)}, {"role": "user", "content": prompt_text}])
-            except Exception as e:
-                quiz_text = f"{_LLM_ERROR_PREFIX} {e}"
-        if quiz_text.startswith(_LLM_ERROR_PREFIX):
-            st.error("Couldn't generate a quiz — the local model didn't respond. Check that Ollama is running, then try again.")
+        questions = None if raw.startswith(_LLM_ERROR_PREFIX) else _parse_quiz(raw)
+        if not questions:
+            st.error("Couldn't generate a quiz — the local model didn't respond. "
+                     "Check that Ollama is running, then try again.")
             if APP_DEBUG:
-                st.code(quiz_text)
+                st.code(raw)
         else:
-            st.session_state["last_quiz"] = quiz_text
-            st.session_state["last_quiz_topic"] = topic or student["subject"]
-            st.session_state.pop("_tm_saved_for", None)
-    if "last_quiz" in st.session_state:
-        st.markdown(_quiz_markdown(st.session_state["last_quiz"]))
-        st.divider()
-        user_answers = st.text_area("Paste your answers (e.g. 1:A 2:C 3:B)", key="_tm_answers", height=80)
-        if st.button("Check Answers", key="_tm_check"):
-            if not user_answers.strip():
-                st.warning("Enter your answers first, e.g. `1:A 2:C 3:B`.")
-                return
-            correct, total = _score_quiz(st.session_state["last_quiz"], user_answers)
-            if total:
-                st.metric("Score", f"{correct}/{total}", f"{round(100 * correct / total)}%")
-                # Guard against double-saving the same quiz on repeated clicks
-                if st.session_state.get("_tm_saved_for") != st.session_state["last_quiz"]:
-                    save_quiz_result(
-                        student["student_id"], st.session_state["last_quiz_topic"],
-                        correct, total, subject=student["subject"],
-                    )
-                    st.session_state["_tm_saved_for"] = st.session_state["last_quiz"]
-            with st.spinner("Evaluating..."):
-                try:
-                    feedback = _llm.chat([
-                        {"role": "system", "content": _build_system_prompt(student)},
-                        {"role": "user", "content": f"Quiz:\n{st.session_state['last_quiz']}\n\nStudent answers: {user_answers}\n\nScore and explain."},
-                    ])
-                except Exception as e:
-                    feedback = f"Error: {e}"
-            st.markdown(feedback)
+            st.session_state["tm_quiz"] = {"topic": topic, "questions": questions[:num_q], "saved": False}
+            for k in [k for k in st.session_state if k.startswith("tm_q_")]:
+                del st.session_state[k]
+
+    quiz = st.session_state.get("tm_quiz")
+    if not quiz:
+        st.info("Pick a topic and generate a quiz. Results feed your streak, readiness and weak areas.",
+                icon=":material/quiz:")
+        return
+
+    st.subheader(quiz["topic"])
+    with st.form("tm_answers"):
+        for i, q in enumerate(quiz["questions"]):
+            st.radio(f"**{i + 1}.** {q['text']}", q["options"], index=None, key=f"tm_q_{i}")
+        submitted = st.form_submit_button("Check answers", type="primary", icon=":material/fact_check:")
+
+    if not submitted and not quiz["saved"]:
+        return
+    picks = [st.session_state.get(f"tm_q_{i}") for i in range(len(quiz["questions"]))]
+    if submitted and None in picks:
+        st.warning(f"Answer all {len(picks)} questions first.")
+        return
+
+    correct = 0
+    for i, (q, pick) in enumerate(zip(quiz["questions"], picks)):
+        chosen = _option_letter(pick, q["options"].index(pick)) if pick in q["options"] else None
+        ok = chosen == q["answer"]
+        correct += ok
+        with st.container(border=True):
+            st.markdown(f"{':green[:material/check_circle:]' if ok else ':red[:material/cancel:]'} "
+                        f"**{i + 1}. {q['text']}**")
+            if not ok:
+                right = next((o for j, o in enumerate(q["options"]) if _option_letter(o, j) == q["answer"]),
+                             q["answer"])
+                st.markdown(f"Correct answer: **{right}**")
+            if q.get("explanation"):
+                st.caption(q["explanation"])
+
+    total = len(quiz["questions"])
+    st.metric("Score", f"{correct}/{total}", f"{round(100 * correct / total)}%")
+    # Guard against double-saving on reruns
+    if not quiz["saved"]:
+        save_quiz_result(student["student_id"], quiz["topic"], correct, total, subject=student["subject"])
+        if correct < total:
+            db.upsert_weak_concept(student["student_id"], quiz["topic"], topic=quiz["topic"],
+                                   subject=student["subject"])
+        quiz["saved"] = True
+        _progress.clear()
+        st.toast("Result saved to your progress", icon=":material/check_circle:")
 
 
 def _handle_find_weak_areas(student):
-    st.markdown("<h2 style='color:#F97316;'>Find Weak Areas</h2><p style='color:#A0B4D6;'>Diagnose your knowledge gaps.</p>", unsafe_allow_html=True)
-    quiz_history = get_quiz_history(student["student_id"])
-    weak_from_db = db.get_weak_concepts(student["student_id"])
-    if weak_from_db:
-        st.subheader("Known Weak Concepts")
-        for w in weak_from_db:
-            st.markdown(f"- **{w['concept']}** *(last seen {(w.get('last_seen') or '')[:10]})*")
-        st.divider()
-    if st.button("Analyse My Weak Areas", width="stretch"):
-        history_summary = "\n".join([f"- {r[0]}: {r[1]}/{r[2]}" for r in quiz_history[:10]]) if quiz_history else "No quiz history yet."
+    st.subheader("AI weak-area analysis")
+    st.caption("Reads your recent quiz results and suggests what to revise first.")
+    if st.button("Analyse my weak areas", icon=":material/psychology:"):
+        quiz_history = _progress(student["student_id"], student["subject"])["history"]
+        history_summary = "\n".join(f"- {r[0]}: {r[1]}/{r[2]}" for r in quiz_history[:10]) or "No quiz history yet."
         prompt_text = (
             f"Based on this quiz history for {student['subject']}:\n{history_summary}\n\n"
             f"Known weak areas from profile: {student['weak_areas'] or 'none'}\n\n"
             "Identify the top 5 weak areas and give specific revision advice for each."
         )
-        with st.spinner("Analysing..."):
-            try:
-                analysis = _llm.chat([{"role": "system", "content": _build_system_prompt(student, mode="FIND_WEAK_AREAS")}, {"role": "user", "content": prompt_text}])
-            except Exception as e:
-                analysis = f"Error: {e}"
-        st.markdown(analysis)
+        with st.chat_message("assistant"):
+            st.write_stream(_llm.stream([
+                {"role": "system", "content": _build_system_prompt(student, mode="FIND_WEAK_AREAS")},
+                {"role": "user", "content": prompt_text},
+            ]))
 
 
-def render_exam_countdown(days_remaining: int, subject: str = "") -> None:
-    """Render a compact exam countdown banner."""
-    render_urgency_countdown(days_remaining, subject)
-
+# ── Dashboard ─────────────────────────────────────────────────────────────────
 
 def _render_dashboard(student):
     render_welcome_banner(student["name"])
-    try:
-        chapter_data = db.get_chapter_scores_by_subject(student["student_id"], student["subject"])
-    except Exception:
-        chapter_data = []
-    scores = [c["score"] for c in chapter_data] if chapter_data else []
-    overall = round(sum(scores) / len(scores), 1) if scores else 50.0
+    stats = _progress(student["student_id"], student["subject"])
+    chapter_data = stats["chapters"]
+    scores = [c["score"] for c in chapter_data]
+    overall = round(sum(scores) / len(scores), 1) if scores else 0.0
     # Upgrade to Elo-based readiness for A/L students
-    _is_al_student = st.session_state.get("student_type", "Undergraduate") == "A/L Student"
-    if _is_al_student:
+    if student.get("student_type") == "A/L Student" and len(stats["history"]) >= 3:
         try:
-            _qh = db.get_quiz_history(student["student_id"]) or []
-            if len(_qh) < 3:
-                raise ValueError("insufficient_data")
             _subj = (student.get("al_subjects") or ["General"])[0]
-            _elo = calculate_readiness(_qh, _subj)
-            overall = float(_elo.get("readiness_pct", overall))
+            overall = float(calculate_readiness(stats["history"], _subj).get("readiness_pct", overall))
         except Exception:
             pass  # fall back to chapter-score average
-    try:
-        streak = db.get_study_streak(student["student_id"])
-    except Exception:
-        streak = 0
-    try:
-        weak_concepts = db.get_weak_concepts(student["student_id"])
-    except Exception:
-        weak_concepts = []
-    render_exam_readiness_hero(
-        overall,
-        student["days_remaining"],
-        streak,
-        len(weak_concepts),
-        student["subject"],
-    )
-    render_exam_countdown(student["days_remaining"], student["subject"])
+    render_exam_readiness_hero(overall, student["days_remaining"], stats["streak"],
+                               len(stats["weak"]), student["subject"])
+    render_urgency_countdown(student["days_remaining"], student["subject"])
     if chapter_data:
         render_chapter_bars(chapter_data)
     todays_topic = get_todays_topic(student)
     if todays_topic:
         render_today_focus(topic=todays_topic, days_left=student["days_remaining"])
-
-    # ── Gemma 4 Feature Badges ────────────────────────────────────────────
-    render_gemma_badges()
-
-    # ── Student Impact Counter ────────────────────────────────────────────
-    try:
-        streak = db.get_study_streak(student["student_id"]) or 0
-        questions = len(get_quiz_history(student["student_id"]) or [])
-        fixed = len(db.get_weak_concepts(student["student_id"], resolved=True) or [])
-    except Exception:
-        streak = questions = fixed = 0
-    render_impact_counter(streak=streak, questions=questions, fixed=fixed)
+    c1, c2 = st.columns(2)
+    c1.metric("Quizzes completed", len(stats["history"]))
+    c2.metric("Weak areas resolved", len(stats["resolved"]))
 
 
 @st.cache_data(ttl=15, show_spinner=False)
@@ -847,184 +594,199 @@ def _check_ollama_connection() -> bool:
     """Return True if Ollama API is reachable (cached briefly to keep reruns fast)."""
     try:
         import httpx
-        return httpx.get(f"{OLLAMA_HOST.rstrip('/')}/api/tags", timeout=3).status_code == 200
+        return httpx.get(f"{OLLAMA_HOST.rstrip('/')}/api/version", timeout=3).status_code == 200
     except Exception:
         return False
 
 
+# ── Pages ─────────────────────────────────────────────────────────────────────
+
+def _page_home():
+    student = _student()
+    _render_dashboard(student)
+    st.subheader("Jump back in")
+    cols = st.columns(3)
+    for col, key, blurb in zip(cols, ("LEARN", "TEST_ME", "VIRTUAL_TEACHER"), (
+        "Ask anything about your subject",
+        "A quick quiz to lock it in",
+        "A guided lesson with Dr. Omni",
+    )):
+        with col.container(border=True):
+            st.page_link(nav.PAGES[key], icon=f":material/{_ICONS[key]}:")
+            st.caption(blurb)
+
+
+def _page_learn():
+    _handle_chat_mode("LEARN", _student())
+
+
+def _page_revise():
+    _handle_chat_mode("REVISE", _student())
+
+
+def _page_test_me():
+    _handle_test_me(_student())
+
+
+def _page_virtual_teacher():
+    render_virtual_teacher_mode(_student(), _llm, db)
+
+
+def _page_past_paper():
+    render_past_paper_mode(_student(), db, _llm)
+
+
+def _page_battle():
+    render_battle_game_mode(_student(), _llm, db)
+
+
+def _page_weakness():
+    student = _student()
+    render_weakness_mode(student, db, _llm)
+    st.divider()
+    _handle_find_weak_areas(student)
+
+
+def _page_study_plan():
+    render_study_plan_mode(_student(), db, _llm)
+
+
+def _page_teacher():
+    render_teacher_mode(_student(), db, _llm)
+
+
+def _page_progress():
+    student = _student()
+    if student.get("student_type") != "A/L Student":
+        st.title("My Progress")
+        _render_dashboard(student)
+        st.info("Switch your profile to **A/L Student** to unlock the 3A Achievement Engine: "
+                "Elo readiness scoring calibrated against Sri Lanka DoE 2022/2023 grade distributions.",
+                icon=":material/emoji_events:")
+        return
+
+    quizzes = len(_progress(student["student_id"], student["subject"])["history"])
+    if quizzes < 3:
+        st.title("3A Achievement Engine")
+        st.progress(quizzes / 3, text=f"{quizzes}/3 quizzes completed")
+        st.write("Complete at least 3 quizzes in Test Me to unlock your personalised Elo readiness score.")
+        if st.button("Start a quiz", type="primary", icon=":material/quiz:"):
+            nav.go("TEST_ME")
+        return
+    render_3a_achievement_mode(student, db, _llm)
+
+
+def _page_notes():
+    st.title("My Notes")
+    st.caption("Upload lecture notes or textbooks (PDF). Learn, Revise and the Virtual Teacher "
+               "answer from them and cite the page.")
+    pdfs = st.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True, key="_notes_pdfs")
+    for pdf in pdfs or []:
+        if pdf.name in st.session_state["rag_docs"]:
+            continue
+        with st.status(f"Indexing {pdf.name}...", expanded=False) as status:
+            try:
+                _al_subj = (st.session_state.get("al_subjects") or [None])[0] or None
+                chunks = ingest_pdf(
+                    pdf, st.session_state.get("subject", "General"),
+                    st.session_state.get("preferred_language", "English"),
+                    al_stream=st.session_state.get("al_stream") or None, al_subject=_al_subj,
+                )
+                if not chunks:
+                    status.update(label=f"{pdf.name}: no selectable text (scanned PDF?)", state="error")
+                    continue
+                st.session_state["rag_docs"].append(pdf.name)
+                db.update_student_pdf(st.session_state["student_id"], ",".join(st.session_state["rag_docs"]))
+                status.update(label=f"{pdf.name}: {chunks} passages indexed", state="complete")
+            except Exception as e:
+                status.update(label=f"Could not index {pdf.name}", state="error")
+                st.write(str(e) if APP_DEBUG else "Check that Ollama is running (it creates the embeddings).")
+
+    docs = st.session_state["rag_docs"]
+    st.subheader(f"Indexed documents ({len(docs)})")
+    if docs:
+        for d in docs:
+            st.markdown(f":material/picture_as_pdf: {d}")
+        st.caption(f"{get_retrieval_coverage().get('total_chunks', 0)} passages searchable")
+    else:
+        st.caption("Nothing uploaded yet.")
+
+
+def _page_settings():
+    st.title("Settings")
+    ok = st.session_state.get("ollama_connected", False)
+    with st.container(border=True):
+        st.subheader("System")
+        st.markdown(f"**AI model:** {st.session_state.get('ollama_model', OLLAMA_MODEL)} "
+                    f"({':green[running]' if ok else ':red[not reachable]'} at `{OLLAMA_HOST}`)")
+        st.markdown(f"**Notes index:** {get_retrieval_coverage().get('total_chunks', 0)} passages")
+        st.markdown("**Internet:** not required — fonts, diagrams and the model run on this machine")
+
+    with st.expander("Demo controls"):
+        st.warning("Resetting replaces the demo students' data with fresh sample data.")
+        if st.button("Reset demo data", icon=":material/restart_alt:", key="btn_reset_demo"):
+            import subprocess
+            result = subprocess.run(
+                [sys.executable, "seed_demo_data.py"],
+                capture_output=True, text=True, cwd=os.path.dirname(os.path.abspath(__file__)),
+            )
+            if result.returncode == 0:
+                st.session_state.clear()
+                _progress.clear()
+                st.rerun()
+            else:
+                st.error(f"Reset failed: {result.stderr[:200]}")
+
+
+def _build_navigation():
+    builders = {
+        "HOME": _page_home, "LEARN": _page_learn, "REVISE": _page_revise, "TEST_ME": _page_test_me,
+        "VIRTUAL_TEACHER": _page_virtual_teacher, "PAST_PAPER": _page_past_paper,
+        "BATTLE_GAME": _page_battle, "WEAKNESS": _page_weakness, "STUDY_PLAN": _page_study_plan,
+        "TEACHER": _page_teacher, "THREE_A": _page_progress, "NOTES": _page_notes,
+        "SETTINGS": _page_settings,
+    }
+    # The landing page is fixed per session (tests and deep links set "mode" before the first run)
+    start = st.session_state.setdefault("_start_page", st.session_state.get("mode", "HOME"))
+    progress_title = "3A Achievement" if st.session_state.get("student_type") == "A/L Student" else "My Progress"
+    titles = {key: title for title, key in _PRIMARY_MODES + _SECONDARY_MODES}
+    titles.update(THREE_A=progress_title, NOTES="My Notes", SETTINGS="Settings")
+
+    def page(key):
+        p = st.Page(builders[key], title=titles[key], icon=f":material/{_ICONS[key]}:",
+                    url_path=key.lower().replace("_", "-"), default=(key == start))
+        nav.PAGES[key] = p
+        return p
+
+    sections = {
+        "Study": [page(k) for _, k in _PRIMARY_MODES],
+        "Practice": [page(k) for _, k in _SECONDARY_MODES],
+        "You": [page("THREE_A"), page("NOTES"), page("SETTINGS")],
+    }
+    return st.navigation(sections, expanded=True)
+
+
 def main():
-    _render_sidebar()
     _ollama_ok = _check_ollama_connection()
     st.session_state["ollama_connected"] = _ollama_ok
     if _ollama_ok:
         st.session_state["ollama_model"] = _llm._resolve_model()
+
+    pg = _build_navigation()
+    _render_sidebar(_ollama_ok)
+    render_offline_seal()
     if not _ollama_ok:
-        st.sidebar.error(f"⚠️ Ollama not responding at {OLLAMA_HOST}")
         st.warning(
             "**The local AI model isn't running.** Your progress, study plan and "
             "history still work, but AI answers won't. Start it with `ollama serve`, "
-            "then refresh this page."
+            "then refresh this page.",
+            icon=":material/cloud_off:",
         )
-    else:
-        st.sidebar.success("✅ Ollama connected")
-    student = _student()
-    mode = st.session_state["mode"]
-
-    # ── Header: Ollama chip · reserved · language toggle ─────────────────
-    render_offline_seal()
-    header_col1, header_col2, header_col3 = st.columns([5, 3, 2])
-    with header_col1:
-        render_ollama_status_chip(
-            connected=_ollama_ok,
-            model=st.session_state.get("ollama_model", OLLAMA_MODEL)
-        )
-    with header_col2:
-        pass  # Reserved
-    with header_col3:
-        _lang_options = {"English": "English", "Sinhala": "Sinhala", "Tamil": "Tamil"}
-        _current_lang = student.get("preferred_language", "English")
-        if _current_lang not in _lang_options:
-            _current_lang = "English"
-        _new_lang = st.selectbox(
-            "🌐",
-            options=list(_lang_options.keys()),
-            index=list(_lang_options.keys()).index(_current_lang),
-            key="lang_quick_toggle",
-            label_visibility="visible",
-        )
-        if _new_lang != _current_lang:
-            st.session_state["preferred_language"] = _new_lang
-            save_student({**student, "preferred_language": _new_lang})
-            st.rerun()
-
-    # WiFi-off demo banner
-    if st.session_state.get("wifi_demo_off", False):
-        render_offline_confirmed_toast()
 
     try:
-        if mode == "LEARN":
-            _render_dashboard(student)
-            st.divider()
-            _handle_chat_mode("LEARN", student)
-        elif mode == "REVISE":
-            _render_dashboard(student)
-            st.divider()
-            _handle_chat_mode("REVISE", student)
-        elif mode == "TEST_ME":
-            _render_dashboard(student)
-            st.divider()
-            _handle_test_me(student)
-        elif mode == "FIND_WEAK_AREAS":
-            _render_dashboard(student)
-            st.divider()
-            _handle_find_weak_areas(student)
-            # Improvement 3: always show model-knowledge grounding badge for Find Weak Areas
-            render_grounding_indicator(sources=[], level="curriculum")
-        elif mode == "STUDY_PLAN":
-            render_study_plan_mode(student, db, _llm)
-        elif mode == "THREE_A":
-            student_type = st.session_state.get("student_type", "Undergraduate")
-
-            if student_type != "A/L Student":
-                # Undergraduate: simple progress dashboard + upgrade CTA
-                _render_dashboard(student)
-                st.markdown("""
-                <div style="
-                  background: rgba(212,162,76,0.05);
-                  border: 1px solid rgba(212,162,76,0.15);
-                  border-radius: 10px;
-                  padding: 14px 18px;
-                  margin-top: 16px;">
-                  <div style="
-                    font-family: 'JetBrains Mono', monospace;
-                    font-size: 0.62rem;
-                    color: #D4A24C;
-                    letter-spacing: 0.12em;
-                    margin-bottom: 6px;">
-                    💡 UPGRADE AVAILABLE
-                  </div>
-                  <div style="
-                    font-family: 'DM Sans', sans-serif;
-                    font-size: 0.88rem;
-                    color: #8899AA;">
-                    Switch to <strong style="color:#D4A24C;">A/L Student</strong>
-                    profile to unlock the 3A Achievement Engine with Elo IRT
-                    readiness scoring calibrated against Sri Lanka DoE 2022/2023
-                    grade distributions.
-                  </div>
-                </div>
-                """, unsafe_allow_html=True)
-                return  # never render 3A content for undergraduates
-
-            # A/L Student: check quiz minimum
-            _qh = []
-            try:
-                _qh = db.get_quiz_history(student["student_id"]) or []
-            except Exception:
-                pass
-
-            if len(_qh) < 3:
-                st.markdown(f"""
-                <div style="
-                  text-align: center;
-                  padding: 56px 32px;
-                  max-width: 520px;
-                  margin: 40px auto;">
-                  <div style="font-size:4rem; margin-bottom:16px;">🏆</div>
-                  <h2 style="
-                    font-family: 'Fraunces', serif;
-                    color: #D4A24C;
-                    margin: 0 0 12px;">
-                    3A Achievement Engine
-                  </h2>
-                  <p style="
-                    color: #8899AA;
-                    font-family: 'DM Sans', sans-serif;
-                    font-size: 0.92rem;
-                    max-width: 380px;
-                    margin: 0 auto 20px;
-                    line-height: 1.6;">
-                    Complete at least 3 quizzes in Test Me mode to unlock your
-                    personalised Elo IRT readiness score — calibrated against
-                    Sri Lanka DoE 2022/2023 grade distributions.
-                  </p>
-                  <div style="
-                    font-family: 'JetBrains Mono', monospace;
-                    font-size: 0.75rem;
-                    color: #D4A24C;
-                    margin-bottom: 24px;">
-                    {len(_qh)}/3 quizzes completed
-                  </div>
-                </div>
-                """, unsafe_allow_html=True)
-                col_l, col_btn, col_r = st.columns([1, 2, 1])
-                with col_btn:
-                    if st.button(
-                        "📝 Start Quiz in Test Me →",
-                        type="primary",
-                        width="stretch",
-                        key="_three_a_goto_test",
-                    ):
-                        st.session_state["mode"] = "TEST_ME"
-                        st.rerun()
-            else:
-                render_3a_achievement_mode(student, db, _llm)
-        elif mode == "PAST_PAPER":
-            render_past_paper_mode(student, db, _llm)
-        elif mode == "ADVANCED_STUDY_PLAN":
-            render_study_plan_mode(student, db, _llm)
-        elif mode == "TEACHER":
-            render_teacher_mode(student, db, _llm)
-        elif mode == "WEAKNESS":
-            render_weakness_mode(student, db, _llm)
-        elif mode == "VIRTUAL_TEACHER":
-            render_virtual_teacher_mode(student, _llm, db)
-        elif mode == "BATTLE_GAME":
-            render_battle_game_mode(student, _llm, db)
-        else:
-            st.error(f"Unknown mode: {mode}")
+        pg.run()
     except Exception as _mode_err:
-        st.error("⚠️ Something went wrong in this mode. Try again, or switch modes from the sidebar.")
+        st.error("Something went wrong on this page. Try again, or pick another page from the sidebar.")
         if APP_DEBUG:
             st.exception(_mode_err)
 
