@@ -15,7 +15,9 @@ except ImportError:
     pass
 
 # ── Ollama ─────────────────────────────────────────────────────────────────────
-OLLAMA_HOST        = os.getenv("OLLAMA_HOST",        "http://localhost:11434")
+# "localhost" tries IPv6 (::1) first on Windows while Ollama listens on IPv4,
+# adding ~2s to every request; 127.0.0.1 avoids the fallback.
+OLLAMA_HOST        = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").replace("//localhost", "//127.0.0.1")
 OLLAMA_MODEL       = os.getenv("OLLAMA_MODEL",       "gemma4:e2b")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "gemma4:e4b")
