@@ -276,7 +276,10 @@ def get_confidence_score(query: str, response: str,
     src_tokens = set((context or " ".join(str(s) for s in sources)).lower().split())
     grounding = len(resp_tokens & src_tokens) / max(1, len(resp_tokens))
 
-    if top_reranker_score > 0.6 and grounding > 0.4:
+    # Callers pass no reranker score, so the 0.6 gate alone could never fire;
+    # an answer citing a retrieved [file page N] label with real overlap counts too.
+    cited = any(str(src).lower() in response.lower() for src in sources)
+    if (top_reranker_score > 0.6 and grounding > 0.4) or (cited and grounding > 0.2):
         return "grounded"
     elif top_reranker_score > 0.2 or grounding > 0.2:
         return "curriculum"

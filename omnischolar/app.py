@@ -697,7 +697,7 @@ def _page_notes():
                     continue
                 st.session_state["rag_docs"].append(pdf.name)
                 db.update_student_pdf(st.session_state["student_id"], ",".join(st.session_state["rag_docs"]))
-                status.update(label=f"{pdf.name}: {chunks} passages indexed", state="complete")
+                status.update(label=f"{pdf.name}: {chunks} passage{'s' if chunks != 1 else ''} indexed", state="complete")
             except Exception as e:
                 status.update(label=f"Could not index {pdf.name}", state="error")
                 st.write(str(e) if APP_DEBUG else "Check that Ollama is running (it creates the embeddings).")

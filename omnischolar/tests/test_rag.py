@@ -90,3 +90,11 @@ def test_context_is_labelled_with_source_page():
     rag.ingest_pdf(_Upload(_pdf("Mitosis produces two identical daughter cells " * 3), "cells.pdf"), "Biology", "English")
     context, _ = rag.retrieve_context_hybrid("mitosis", subject="Biology")
     assert context.startswith("[cells.pdf page 1]")
+
+
+def test_confidence_counts_a_correct_citation():
+    ctx = "[bio.pdf page 3]\nThe Calvin cycle takes place in the stroma of the chloroplast."
+    answer = "The Calvin cycle takes place in the stroma. FROM YOUR MATERIAL: [bio.pdf page 3]"
+    assert rag.get_confidence_score("q", answer, ["bio.pdf page 3"], context=ctx) == "grounded"
+    uncited = "Glycolysis happens in the cytoplasm of every living cell."
+    assert rag.get_confidence_score("q", uncited, ["bio.pdf page 3"], context=ctx) != "grounded"
