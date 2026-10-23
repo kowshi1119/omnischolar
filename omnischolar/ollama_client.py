@@ -10,7 +10,12 @@ import ollama
 OLLAMA_HOST        = os.getenv("OLLAMA_HOST",        "http://localhost:11434")
 OLLAMA_MODEL       = os.getenv("OLLAMA_MODEL",       "gemma4:latest")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
-OLLAMA_NUM_CTX     = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
+OLLAMA_NUM_CTX     = int(os.getenv("OLLAMA_NUM_CTX", "4096"))
+
+# Context window presets — choose the smallest that fits the task
+FAST_CTX  = 2048   # quiz grading, short evaluations, battle questions
+STUDY_CTX = 4096   # explanations, revise, virtual teacher turns
+DEEP_CTX  = 8192   # full lesson generation, paper summarizer
 
 
 class OllamaClient:
@@ -58,7 +63,6 @@ class OllamaClient:
         thinking:      bool = False,
         temperature:   float = 0.7,
         num_ctx:       int   = None,
-        num_predict:   int   = None,
     ) -> str:
         """
         Send a chat request and return the full response text.
@@ -70,12 +74,7 @@ class OllamaClient:
         api_messages.extend(messages)
 
         model = self._resolve_model()
-        options = {
-            "num_ctx":     num_ctx if num_ctx is not None else self.num_ctx,
-            "temperature": temperature,
-            "num_predict": num_predict if num_predict is not None else int(os.getenv("OLLAMA_NUM_PREDICT", "512")),
-            "num_batch":   int(os.getenv("OLLAMA_NUM_BATCH", "512")),
-        }
+        options = {"num_ctx": num_ctx if num_ctx is not None else STUDY_CTX, "temperature": temperature}
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
@@ -109,7 +108,6 @@ class OllamaClient:
         system_prompt: str  = "",
         temperature:   float = 0.7,
         num_ctx:       int   = None,
-        num_predict:   int   = None,
     ) -> Iterator[str]:
         """Stream chat tokens. Yields string chunks."""
         api_messages = []
@@ -118,12 +116,7 @@ class OllamaClient:
         api_messages.extend(messages)
 
         model = self._resolve_model()
-        options = {
-            "num_ctx":     num_ctx if num_ctx is not None else self.num_ctx,
-            "temperature": temperature,
-            "num_predict": num_predict if num_predict is not None else int(os.getenv("OLLAMA_NUM_PREDICT", "512")),
-            "num_batch":   int(os.getenv("OLLAMA_NUM_BATCH", "512")),
-        }
+        options = {"num_ctx": num_ctx if num_ctx is not None else STUDY_CTX, "temperature": temperature}
 
         try:
             for chunk in self._client.chat(
@@ -166,10 +159,9 @@ class OllamaClient:
             api_messages.append({"role": "system", "content": system})
         api_messages.append({"role": "user", "content": message})
 
-        # Always use e2b for fast calls — faster inference
-        model = "gemma4:e2b"
+        model = self._resolve_model()
         options = {
-            "num_ctx": 2048,       # minimal context — faster decode
+            "num_ctx": FAST_CTX,   # minimal context — faster decode
             "temperature": 0.3,    # lower temp = faster + more deterministic
             "num_predict": max_tokens,
         }

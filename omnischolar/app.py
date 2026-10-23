@@ -33,6 +33,9 @@ from ui_components import (
     render_impact_counter,
     render_system_status,
     render_today_focus,
+    render_ollama_status_chip,
+    render_offline_seal,
+    render_offline_confirmed_toast,
     COLORS,
 )
 from achievement import render_achievement_mode
@@ -44,7 +47,6 @@ from weakness import render_weakness_mode
 from virtual_teacher import render_virtual_teacher_mode
 from battle_game import render_battle_game_mode
 from al_config import STREAM_SUBJECTS, STREAM_DEFAULT_SUBJECTS, STUDENT_TYPES
-from achievement_3a import render_3a_achievement_mode
 
 inject_premium_css()
 
@@ -68,29 +70,27 @@ if "_llm" not in st.session_state:
     st.session_state["_llm"] = OllamaClient()
 _llm = st.session_state["_llm"]
 
-# Primary navigation — always visible in sidebar
+# Primary modes — always visible in sidebar (THREE_A is a dedicated button)
 _PRIMARY_MODES = [
     ("📖 Learn",           "LEARN"),
     ("🔄 Revise",          "REVISE"),
     ("📝 Test Me",         "TEST_ME"),
     ("🤖 Virtual Teacher", "VIRTUAL_TEACHER"),
-    ("📊 My Progress",     "THREE_A"),       # A/L only — filtered in sidebar
 ]
 
-# Secondary — under "⋯ More" expander
+# Secondary modes — under "⋯ Tools" expander
 _SECONDARY_MODES = [
-    ("🔍 Find Weak Areas",    "FIND_WEAK_AREAS"),
-    ("📅 Study Plan",         "STUDY_PLAN"),
-    ("📄 Past Paper Battle",  "PAST_PAPER"),
-    ("⚔️ CS Battle",         "BATTLE_GAME"),
-    ("👩‍🏫 Teacher Mode",    "TEACHER"),
-    ("⚠️ Weakness Analysis", "WEAKNESS"),
-    ("🗓️ Advanced Study Plan","ADVANCED_STUDY_PLAN"),
-    ("🏆 3A Achievement",     "THREE_A"),    # Also reachable from primary when A/L
+    ("🔍 Find Weak Areas",     "FIND_WEAK_AREAS"),
+    ("📅 Study Plan",          "STUDY_PLAN"),
+    ("📄 Past Paper Battle",   "PAST_PAPER"),
+    ("⚔️  CS Battle",          "BATTLE_GAME"),
+    ("👩‍🏫 Teacher Mode",      "TEACHER"),
+    ("⚠️ Weakness Analysis",   "WEAKNESS"),
+    ("🗓️ Advanced Study Plan", "ADVANCED_STUDY_PLAN"),
 ]
 
-# Combined for all internal dispatch / delegated lookup
-MODES = _PRIMARY_MODES + [m for m in _SECONDARY_MODES if m[1] != "THREE_A"]
+# Combined for internal dispatch (THREE_A handled via dedicated button)
+MODES = _PRIMARY_MODES + _SECONDARY_MODES
 
 _DELEGATED = {
     "THREE_A", "PAST_PAPER", "ADVANCED_STUDY_PLAN", "TEACHER",
@@ -117,6 +117,29 @@ def _init_session():
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
+
+    # One-time hydration: restore saved profile so A/L settings survive restarts.
+    if not st.session_state.get("_profile_hydrated", False):
+        loaded = None
+        _sid = st.session_state.get("student_id")
+        if _sid:
+            loaded = db.get_student_profile(_sid)
+        if not loaded:
+            loaded = db.get_latest_student_profile()
+
+        if loaded:
+            st.session_state["student_id"] = loaded.get("student_id") or st.session_state["student_id"]
+            st.session_state["name"] = loaded.get("name") or st.session_state["name"]
+            st.session_state["subject"] = loaded.get("subject") or st.session_state["subject"]
+            st.session_state["exam_date"] = loaded.get("exam_date") or st.session_state["exam_date"]
+            st.session_state["weak_areas"] = loaded.get("weak_areas") or st.session_state["weak_areas"]
+            st.session_state["preferred_language"] = loaded.get("preferred_language") or st.session_state["preferred_language"]
+            st.session_state["student_type"] = loaded.get("student_type") or st.session_state["student_type"]
+            st.session_state["al_stream"] = loaded.get("al_stream") or st.session_state["al_stream"]
+            _loaded_subjects = loaded.get("al_subjects") or []
+            st.session_state["al_subjects"] = _loaded_subjects if isinstance(_loaded_subjects, list) else []
+
+        st.session_state["_profile_hydrated"] = True
 
 
 _init_session()
@@ -260,45 +283,206 @@ def _render_sidebar():
                 st.success(f"{len(st.session_state['rag_docs'])} PDF(s) loaded")
         st.divider()
         _render_system_status()
-        st.markdown("**Learning Mode**")
         _cur_mode = st.session_state["mode"]
+        _PRIMARY_MODE_KEYS = [m[1] for m in _PRIMARY_MODES]
 
-        # ── Primary modes — always visible ────────────────────────────────
-        _prim = _PRIMARY_MODES
-        _prim_labels = [m[0] for m in _prim]
-        _prim_values = [m[1] for m in _prim]
-        _in_primary = _cur_mode in _prim_values
-        _prim_idx = _prim_values.index(_cur_mode) if _in_primary else 0
-        _sel_prim = st.radio("Mode", _prim_labels, index=_prim_idx,
-                             key="_sb_mode_primary", label_visibility="collapsed")
-        _new_mode_prim = _prim_values[_prim_labels.index(_sel_prim)]
+        # ── Section 1: STUDY ─────────────────────────────────────────────
+        st.sidebar.markdown(
+            '<div class="omni-section-label">── STUDY ──</div>',
+            unsafe_allow_html=True,
+        )
 
-        # ── Secondary modes — collapsed expander ──────────────────────────
-        _new_mode_sec = None
-        with st.expander("⋯ More modes", expanded=not _in_primary):
-            _sec = [m for m in _SECONDARY_MODES if m[1] != "THREE_A"]
-            _sec_labels = [m[0] for m in _sec]
-            _sec_values = [m[1] for m in _sec]
-            _sec_idx = _sec_values.index(_cur_mode) if _cur_mode in _sec_values else 0
-            _sel_sec = st.radio("More", _sec_labels, index=_sec_idx,
-                                key="_sb_mode_secondary", label_visibility="collapsed")
-            _new_mode_sec = _sec_values[_sec_labels.index(_sel_sec)]
+        for _label, _mode_val in _PRIMARY_MODES:
+            _is_active = (st.session_state["mode"] == _mode_val)
+            if st.sidebar.button(
+                _label,
+                key=f"nav_btn_{_mode_val}",
+                use_container_width=True,
+                type="primary" if _is_active else "secondary",
+            ):
+                if st.session_state["mode"] != _mode_val:
+                    st.session_state["mode"] = _mode_val
+                    st.session_state["chat_history"] = []
+                    for _k in [
+                        "vt_lesson", "vt_topic", "vt_phase",
+                        "vt_mid_answered", "vt_answers",
+                        "test_questions", "test_idx",
+                        "battle_state", "pp_questions",
+                    ]:
+                        st.session_state.pop(_k, None)
+                    st.rerun()
 
-        # Determine active mode: secondary selection wins when user is in expander
-        _new_mode = _new_mode_sec if not _in_primary else _new_mode_prim
-        # If primary radio changed, use that
-        if _new_mode_prim != _cur_mode and _new_mode_prim in _prim_values:
-            _new_mode = _new_mode_prim
+        # ── Section 2: MORE ──────────────────────────────────────────────
+        st.sidebar.markdown(
+            '<div class="omni-section-label">── MORE ──</div>',
+            unsafe_allow_html=True,
+        )
 
-        if _new_mode != st.session_state["mode"]:
-            st.session_state["mode"] = _new_mode
-            st.session_state["chat_history"] = []
-            st.rerun()
+        _sec_modes = [m for m in _SECONDARY_MODES]
+        _sec_mode_vals = [m[1] for m in _sec_modes]
+        with st.sidebar.expander(
+            "⋯ Tools",
+            expanded=(st.session_state["mode"] in _sec_mode_vals),
+        ):
+            for _label, _mode_val in _sec_modes:
+                _is_active = (st.session_state["mode"] == _mode_val)
+                if st.button(
+                    _label,
+                    key=f"nav_btn_{_mode_val}",
+                    use_container_width=True,
+                    type="primary" if _is_active else "secondary",
+                ):
+                    if st.session_state["mode"] != _mode_val:
+                        st.session_state["mode"] = _mode_val
+                        st.session_state["chat_history"] = []
+                        for _k in [
+                            "vt_lesson", "vt_topic", "vt_phase",
+                            "vt_mid_answered", "vt_answers",
+                            "test_questions", "test_idx",
+                            "battle_state", "pp_questions",
+                        ]:
+                            st.session_state.pop(_k, None)
+                        st.rerun()
 
-        st.sidebar.markdown("---")
-        if st.sidebar.button("🏆 View My Exam Readiness", use_container_width=True):
-            st.session_state["mode"] = "THREE_A"
-            st.rerun()
+        # Active mode teal highlight via CSS
+        _active_mode = st.session_state["mode"]
+        st.sidebar.markdown(f"""
+        <style>
+        [data-testid="stSidebar"]
+        [data-testid="stButton"][key="nav_btn_{_active_mode}"] > button {{
+          border-color: #00B4A6 !important;
+          color: #00B4A6 !important;
+          background: rgba(0,180,166,0.1) !important;
+        }}
+        </style>
+        """, unsafe_allow_html=True)
+
+        # ── Section 3: A/L ACHIEVEMENT (conditional) ─────────────────────────
+        _student_type_sb = st.session_state.get("student_type", "Undergraduate")
+
+        if _student_type_sb == "A/L Student":
+            # Gold gradient separator + section label
+            st.sidebar.markdown("""
+            <div style="
+              height: 1px;
+              background: linear-gradient(90deg,
+                transparent, rgba(212,162,76,0.4), transparent);
+              margin: 14px 0 10px;">
+            </div>
+            <div style="
+              font-family: 'JetBrains Mono', monospace;
+              font-size: 0.58rem;
+              color: #3A5060;
+              letter-spacing: 0.22em;
+              text-transform: uppercase;
+              padding: 0 4px 8px;
+              display: flex;
+              align-items: center;
+              gap: 6px;">
+              <span style="color:#D4A24C;">🏆</span>
+              A/L ACHIEVEMENT
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Get quiz count for lock/unlock state
+            _quiz_count = 0
+            try:
+                _qh_sb = db.get_quiz_history(
+                    st.session_state.get("student_id", "")) or []
+                _quiz_count = len(_qh_sb)
+            except Exception:
+                pass
+
+            _is_unlocked = _quiz_count >= 3
+
+            if _is_unlocked:
+                if st.sidebar.button(
+                    "🏆 3A Achievement Engine",
+                    use_container_width=True,
+                    help="Elo IRT readiness · DoE grade calibration",
+                    key="btn_3a_achievement",
+                ):
+                    st.session_state["mode"] = "THREE_A"
+                    st.session_state["chat_history"] = []
+                    st.rerun()
+                # Gold highlight when active
+                if st.session_state.get("mode") == "THREE_A":
+                    st.sidebar.markdown("""
+                    <style>
+                    [data-testid="stSidebar"]
+                    [data-testid="stButton"]:last-of-type > button {
+                      background: rgba(212,162,76,0.12) !important;
+                      border-color: rgba(212,162,76,0.5) !important;
+                      color: #D4A24C !important;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
+            else:
+                # Locked — show progress toward unlock
+                _needed = max(0, 3 - _quiz_count)
+                st.sidebar.markdown(f"""
+                <div style="
+                  background: rgba(212,162,76,0.04);
+                  border: 1px solid rgba(212,162,76,0.15);
+                  border-radius: 10px;
+                  padding: 10px 12px;
+                  margin: 2px 0;">
+                  <div style="
+                    font-family: 'DM Sans', sans-serif;
+                    font-size: 0.8rem;
+                    color: #3A5060;
+                    margin-bottom: 6px;">
+                    🔒 3A Achievement Engine
+                  </div>
+                  <div style="
+                    font-family: 'JetBrains Mono', monospace;
+                    font-size: 0.62rem;
+                    color: #D4A24C;
+                    opacity: 0.7;">
+                    Complete {_needed} more quiz{"" if _needed == 1 else "zes"} to unlock
+                  </div>
+                  <div style="
+                    height: 3px;
+                    background: rgba(212,162,76,0.1);
+                    border-radius: 2px;
+                    margin-top: 8px;
+                    overflow: hidden;">
+                    <div style="
+                      height: 100%;
+                      width: {(_quiz_count / 3) * 100:.0f}%;
+                      background: #D4A24C;
+                      border-radius: 2px;">
+                    </div>
+                  </div>
+                  <div style="
+                    font-family: 'JetBrains Mono', monospace;
+                    font-size: 0.55rem;
+                    color: #2A3A4A;
+                    margin-top: 4px;
+                    text-align: right;">
+                    {_quiz_count}/3 quizzes
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        elif _student_type_sb == "Undergraduate":
+            # Subtle separator + simple progress button (no 3A engine for UG)
+            st.sidebar.markdown("""
+            <div style="
+              height: 1px;
+              background: rgba(0,180,166,0.08);
+              margin: 14px 0 10px;">
+            </div>
+            """, unsafe_allow_html=True)
+            if st.sidebar.button(
+                "📊 My Progress",
+                use_container_width=True,
+                help="View your study progress and readiness",
+                key="btn_progress_ug",
+            ):
+                st.session_state["mode"] = "THREE_A"
+                st.session_state["chat_history"] = []
+                st.rerun()
 
         st.divider()
         st.sidebar.markdown(
@@ -329,6 +513,54 @@ def _render_sidebar():
                     st.rerun()
                 else:
                     st.error(f"Reset failed: {result.stderr[:200]}")
+
+            st.markdown("---")
+
+            # Demo mode toggle
+            demo_mode = st.checkbox(
+                "🎬 Demo Mode",
+                value=st.session_state.get("demo_mode", False),
+                help="Optimize UI for video recording",
+            )
+            st.session_state["demo_mode"] = demo_mode
+
+            if demo_mode:
+                _subj = st.session_state.get("subject", "")
+                _demo_topic = (
+                    "Deadlock" if "computer" in _subj.lower() or "cs" in _subj.lower() else
+                    "Cellular Respiration" if "biology" in _subj.lower() else
+                    "Newton's Laws" if "physics" in _subj.lower() else
+                    "Recursion"
+                )
+                st.info(f"🎬 Demo topic: **{_demo_topic}**")
+                st.session_state["demo_topic"] = _demo_topic
+
+            # WiFi Off simulation
+            wifi_off = st.checkbox(
+                "📵 Simulate WiFi Off",
+                value=st.session_state.get("wifi_demo_off", False),
+                help="Shows offline confirmation banner for demo",
+            )
+            st.session_state["wifi_demo_off"] = wifi_off
+
+    # Dr. Omni greeting card — bottom of sidebar
+    try:
+        from _new_avatar import render_dr_omni_greeting_card
+        _s = _student()
+        _today_topic = (
+            st.session_state.get("vt_topic")
+            or st.session_state.get("demo_topic")
+            or ""
+        )
+        _days = max(int(_s.get("days_remaining", 1)), 1)
+        render_dr_omni_greeting_card(
+            name=_s.get("name", "Student"),
+            topic=_today_topic,
+            days_left=_days,
+            emotion="idle",
+        )
+    except Exception:
+        pass  # Avatar never crashes the sidebar
 
 
 def _build_system_prompt(student, context=""):
@@ -485,10 +717,12 @@ def _render_dashboard(student):
     _is_al_student = st.session_state.get("student_type", "Undergraduate") == "A/L Student"
     if _is_al_student:
         try:
-            _qh = db.get_quiz_history(student["student_id"])
-            _subj = student.get("subject", "ICT")
-            _elo_result = calculate_readiness(_qh, _subj)
-            overall = float(_elo_result["readiness_pct"])
+            _qh = db.get_quiz_history(student["student_id"]) or []
+            if len(_qh) < 3:
+                raise ValueError("insufficient_data")
+            _subj = (student.get("al_subjects") or ["General"])[0]
+            _elo = calculate_readiness(_qh, _subj)
+            overall = float(_elo.get("readiness_pct", overall))
         except Exception:
             pass  # fall back to chapter-score average
     try:
@@ -541,7 +775,8 @@ def _check_ollama_connection() -> bool:
 
 def main():
     _render_sidebar()
-    if not _check_ollama_connection():
+    _ollama_ok = _check_ollama_connection()
+    if not _ollama_ok:
         st.sidebar.error("⚠️ Ollama not responding on :11434")
         st.error("**Gemma 4 is not running.**\n\nOpen PowerShell and run:\n```\nollama serve\n```\nThen refresh this page.")
         return
@@ -550,9 +785,17 @@ def main():
     student = _student()
     mode = st.session_state["mode"]
 
-    # ── Language quick-toggle (visible in all modes) ──────────────────────
-    lang_col1, lang_col2 = st.columns([8, 2])
-    with lang_col2:
+    # ── Header: Ollama chip · reserved · language toggle ─────────────────
+    render_offline_seal()
+    header_col1, header_col2, header_col3 = st.columns([5, 3, 2])
+    with header_col1:
+        render_ollama_status_chip(
+            connected=_ollama_ok,
+            model=os.getenv("OLLAMA_MODEL", OLLAMA_MODEL)
+        )
+    with header_col2:
+        pass  # Reserved
+    with header_col3:
         _lang_options = {"English": "English", "Sinhala": "Sinhala", "Tamil": "Tamil"}
         _current_lang = student.get("preferred_language", "English")
         if _current_lang not in _lang_options:
@@ -568,6 +811,10 @@ def main():
             st.session_state["preferred_language"] = _new_lang
             save_student({**student, "preferred_language": _new_lang})
             st.rerun()
+
+    # WiFi-off demo banner
+    if st.session_state.get("wifi_demo_off", False):
+        render_offline_confirmed_toast()
 
     try:
         if mode == "LEARN":
@@ -586,10 +833,97 @@ def main():
             _render_dashboard(student)
             st.divider()
             _handle_find_weak_areas(student)
+            # Improvement 3: always show model-knowledge grounding badge for Find Weak Areas
+            render_grounding_indicator(sources=[], level="curriculum")
         elif mode == "STUDY_PLAN":
             render_study_plan_mode(student, db, _llm)
         elif mode == "THREE_A":
-            render_3a_achievement_mode(student, db, _llm)
+            student_type = st.session_state.get("student_type", "Undergraduate")
+
+            if student_type != "A/L Student":
+                # Undergraduate: simple progress dashboard + upgrade CTA
+                _render_dashboard(student)
+                st.markdown("""
+                <div style="
+                  background: rgba(212,162,76,0.05);
+                  border: 1px solid rgba(212,162,76,0.15);
+                  border-radius: 10px;
+                  padding: 14px 18px;
+                  margin-top: 16px;">
+                  <div style="
+                    font-family: 'JetBrains Mono', monospace;
+                    font-size: 0.62rem;
+                    color: #D4A24C;
+                    letter-spacing: 0.12em;
+                    margin-bottom: 6px;">
+                    💡 UPGRADE AVAILABLE
+                  </div>
+                  <div style="
+                    font-family: 'DM Sans', sans-serif;
+                    font-size: 0.88rem;
+                    color: #8899AA;">
+                    Switch to <strong style="color:#D4A24C;">A/L Student</strong>
+                    profile to unlock the 3A Achievement Engine with Elo IRT
+                    readiness scoring calibrated against Sri Lanka DoE 2022/2023
+                    grade distributions.
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+                return  # never render 3A content for undergraduates
+
+            # A/L Student: check quiz minimum
+            _qh = []
+            try:
+                _qh = db.get_quiz_history(student["student_id"]) or []
+            except Exception:
+                pass
+
+            if len(_qh) < 3:
+                st.markdown(f"""
+                <div style="
+                  text-align: center;
+                  padding: 56px 32px;
+                  max-width: 520px;
+                  margin: 40px auto;">
+                  <div style="font-size:4rem; margin-bottom:16px;">🏆</div>
+                  <h2 style="
+                    font-family: 'Fraunces', serif;
+                    color: #D4A24C;
+                    margin: 0 0 12px;">
+                    3A Achievement Engine
+                  </h2>
+                  <p style="
+                    color: #8899AA;
+                    font-family: 'DM Sans', sans-serif;
+                    font-size: 0.92rem;
+                    max-width: 380px;
+                    margin: 0 auto 20px;
+                    line-height: 1.6;">
+                    Complete at least 3 quizzes in Test Me mode to unlock your
+                    personalised Elo IRT readiness score — calibrated against
+                    Sri Lanka DoE 2022/2023 grade distributions.
+                  </p>
+                  <div style="
+                    font-family: 'JetBrains Mono', monospace;
+                    font-size: 0.75rem;
+                    color: #D4A24C;
+                    margin-bottom: 24px;">
+                    {len(_qh)}/3 quizzes completed
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+                col_l, col_btn, col_r = st.columns([1, 2, 1])
+                with col_btn:
+                    if st.button(
+                        "📝 Start Quiz in Test Me →",
+                        type="primary",
+                        use_container_width=True,
+                        key="_three_a_goto_test",
+                    ):
+                        st.session_state["mode"] = "TEST_ME"
+                        st.rerun()
+            else:
+                render_3a_achievement_mode(student, db, _llm)
         elif mode == "PAST_PAPER":
             render_past_paper_mode(student, db, _llm)
         elif mode == "ADVANCED_STUDY_PLAN":

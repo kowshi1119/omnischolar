@@ -127,6 +127,80 @@ def _render_paper(paper_data: dict):
                 st.markdown("")
 
 
+# ── Streaming question generator ────────────────────────────────────────────
+
+def _generate_questions_streaming(
+    llm,
+    subject,
+    num_questions,
+    difficulty_dist,
+    language,
+    exam_format,
+    student_type,
+    progress_container,
+    result_container,
+):
+    """Generate questions ONE AT A TIME with live progress."""
+    all_questions = []
+    progress_bar = progress_container.progress(0)
+    status_text = progress_container.empty()
+
+    if student_type == "A/L Student":
+        format_instruction = (
+            f"Generate this as a Sri Lanka A/L examination question "
+            f"in {exam_format} format. Follow DoE marking conventions."
+        )
+    else:
+        format_instruction = (
+            f"Generate this as a {exam_format} format university exam question."
+        )
+
+    easy_pct = difficulty_dist.get("easy", 30)
+    medium_pct = difficulty_dist.get("medium", 40)
+
+    for i in range(num_questions):
+        rand_val = (i / max(num_questions, 1)) * 100
+        if rand_val < easy_pct:
+            diff = "easy"
+        elif rand_val < easy_pct + medium_pct:
+            diff = "medium"
+        else:
+            diff = "hard"
+
+        status_text.markdown(
+            f"Generating question {i + 1} of {num_questions} ({diff})..."
+        )
+
+        prompt = (
+            f"Generate exactly ONE {diff} {subject} exam question in {language}. "
+            f"{format_instruction} "
+            f"Format:\nQ: [question text]\n"
+            f"A) [option]\nB) [option]\nC) [option]\nD) [option]\n"
+            f"Answer: [correct letter]\nMarks: [1-5]\n"
+            f"Explanation: [brief]\n\n"
+            f"Generate ONLY this one question. Nothing else."
+        )
+
+        try:
+            result = llm.fast_chat(
+                message=prompt,
+                system=(
+                    f"You are a {subject} examiner. "
+                    f"Generate one question only. Be concise."
+                ),
+                max_tokens=300,
+            )
+            all_questions.append(result.strip())
+        except Exception as exc:
+            all_questions.append(f"Q{i + 1}: [Generation failed: {exc}]")
+
+        progress_bar.progress((i + 1) / num_questions)
+        result_container.markdown("\n\n---\n\n".join(all_questions))
+
+    status_text.success(f"[OK] Generated {num_questions} questions!")
+    return "\n\n---\n\n".join(all_questions)
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def render_class_analytics(db) -> None:
@@ -225,7 +299,37 @@ def render_teacher_mode(student: dict, db, llm):
                 hard_pct = 0
             st.caption(f"Hard: {hard_pct}% (auto-calculated)")
 
-            university = st.selectbox("University Format", _UNIVERSITIES)
+            student_type = student.get("student_type", "Undergraduate")
+            if student_type == "A/L Student":
+                _al_formats = [
+                    "Sri Lanka A/L (General)",
+                    "Sri Lanka A/L (2023 Style)",
+                    "Sri Lanka A/L (2022 Style)",
+                    "NIE Curriculum Format",
+                ]
+                university = st.selectbox(
+                    "A/L Exam Format", _al_formats, key="teacher_al_format"
+                )
+                _al_subs = student.get("al_subjects") or []
+                if isinstance(_al_subs, str):
+                    try:
+                        _al_subs = json.loads(_al_subs)
+                    except Exception:
+                        _al_subs = []
+                if _al_subs:
+                    paper_subject = st.text_input(
+                        "Subject",
+                        value=_al_subs[0],
+                        key="teacher_subject_al",
+                    )
+                st.caption(
+                    "A/L papers follow DoE format: "
+                    "Part A (MCQ) + Part B (Structured Essays)"
+                )
+            else:
+                university = st.selectbox(
+                    "University Format", _UNIVERSITIES, key="teacher_uni_format"
+                )
 
         time_allowed = _time_for_marks(total_marks)
         difficulty_distribution = f"Easy {easy_pct}% / Medium {medium_pct}% / Hard {hard_pct}%"
@@ -236,77 +340,63 @@ def render_teacher_mode(student: dict, db, llm):
             st.info(f"📌 Generating revision paper for: **{topic_prefill}**")
 
         st.markdown("---")
+
+        # Cap questions at 5 for demo speed
+        num_q = question_count
+        if num_q > 5:
+            st.warning(
+                f"Capped at 5 questions for speed. "
+                f"Full {num_q}-question paper would take "
+                f"{num_q * 2}\u2013{num_q * 3} minutes."
+            )
+            num_q = 5
+
         generate_btn = st.button(
-            f"🖨️ Generate {question_count}-Question {paper_subject} Paper",
+            f"Generate {num_q}-Question {paper_subject} Paper",
             type="primary",
             use_container_width=True,
         )
 
         if "generated_paper" not in st.session_state:
             st.session_state.generated_paper = None
+        if "teacher_paper" not in st.session_state:
+            st.session_state.teacher_paper = None
 
         if generate_btn:
-            prog = st.progress(0)
-            stat = st.empty()
-            stat.info(f"⧡ Gemma 4 is generating {question_count} questions... (2-4 minutes)")
-            prog.progress(25)
-            # RAG grounding
-            context, sources = retrieve_context(
-                f"{paper_subject} exam questions {difficulty_distribution}",
-                subject=paper_subject, n_results=5,
-            )
-            ctx_block = context if context else (
-                f"Generate questions based on standard {paper_subject} curriculum."
-            )
-
-            prompt_text = PAPER_GEN_PROMPT.format(
-                university=university,
+            _prog_container = st.container()
+            _result_container = st.container()
+            paper_text = _generate_questions_streaming(
+                llm=llm,
                 subject=paper_subject,
-                count=question_count,
-                question_types=", ".join(question_types),
-                difficulty_distribution=difficulty_distribution,
-                total_marks=total_marks,
+                num_questions=num_q,
+                difficulty_dist={"easy": easy_pct, "medium": medium_pct},
                 language=paper_language,
-                time_allowed=time_allowed,
-                rag_context=ctx_block[:3000],
+                exam_format=university,
+                student_type=student.get("student_type", "Undergraduate"),
+                progress_container=_prog_container,
+                result_container=_result_container,
             )
+            st.session_state.teacher_paper = paper_text
+            st.session_state.generated_paper = None  # clear legacy JSON paper
 
-            try:
-                raw = llm.fast_chat(
-                    message=prompt_text[:2000],
-                    system="Return ONLY valid JSON. No markdown fences. No preamble.",
-                    max_tokens=2048,
+        # ── Show streamed paper ───────────────────────────────────────────────
+        if st.session_state.get("teacher_paper"):
+            st.markdown("---")
+            st.markdown("## Generated Exam Paper")
+            col_dl, col_new = st.columns([3, 1])
+            with col_dl:
+                st.download_button(
+                    label="Download Paper (TXT)",
+                    data=st.session_state.teacher_paper,
+                    file_name=f"{paper_subject}_paper.txt",
+                    mime="text/plain",
+                    key="btn_txt_download",
                 )
-                prog.progress(75)
-                stat.markdown("⧡ Parsing paper structure...")
-                # Strip markdown code fences if present
-                raw_clean = raw.strip()
-                if raw_clean.startswith("```"):
-                    raw_clean = "\n".join(raw_clean.split("\n")[1:])
-                if raw_clean.endswith("```"):
-                    raw_clean = "\n".join(raw_clean.split("\n")[:-1])
-
-                paper_data = json.loads(raw_clean)
-                st.session_state.generated_paper = paper_data
-                st.session_state.paper_sources = sources
-                prog.progress(100)
-                stat.empty()
-                prog.empty()
-
-            except json.JSONDecodeError:
-                st.session_state.generated_paper = None
-                prog.empty()
-                stat.empty()
-                st.markdown("#### Generated Paper")
-                st.markdown(raw)
-                st.caption("Note: Could not parse as structured JSON — displaying raw output.")
-            except Exception as exc:
-                prog.empty()
-                stat.empty()
-                st.error(
-                    f"Could not generate paper — please ensure Ollama is running.\n\n{exc}"
-                )
-                st.session_state.generated_paper = None
+            with col_new:
+                if st.button("Generate New Paper", key="btn_new_stream"):
+                    st.session_state.teacher_paper = None
+                    st.rerun()
+            st.markdown(st.session_state.teacher_paper)
 
         # Render generated paper
         if st.session_state.generated_paper:

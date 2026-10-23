@@ -228,6 +228,7 @@ class Database:
 
         # Add missing columns to weak_concepts (legacy schema may lack these)
         for _col, _type in [
+            ("subject",    "TEXT DEFAULT ''"),
             ("topic",      "TEXT DEFAULT ''"),
             ("error_type", "TEXT DEFAULT 'factual_error'"),
             ("frequency",  "INTEGER DEFAULT 1"),
@@ -340,6 +341,7 @@ class Database:
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 student_id  TEXT NOT NULL,
                 concept     TEXT NOT NULL,
+                subject     TEXT DEFAULT '',
                 topic       TEXT NOT NULL DEFAULT '',
                 error_type  TEXT NOT NULL DEFAULT 'factual_error',
                 frequency   INTEGER NOT NULL DEFAULT 1,
@@ -587,36 +589,53 @@ class Database:
     def get_weak_concepts(self, student_id: str, resolved: bool = False) -> list:
         conn = self._conn()
         c = conn.cursor()
-        # Defensive: only request columns that exist
-        cols = {row[1] for row in c.execute("PRAGMA table_info(weak_concepts)")}
-        sel = ["id", "concept", "subject", "created_at"]
-        if "topic" in cols:      sel.append("topic")
-        if "frequency" in cols:  sel.append("frequency")
-        if "last_seen" in cols:  sel.append("last_seen")
-        c.execute(
-            f"SELECT {', '.join(sel)} FROM weak_concepts "
-            f"WHERE student_id = ? AND resolved = ?",
-            (student_id, 1 if resolved else 0),
-        )
-        rows = c.fetchall()
-        conn.close()
-        out = []
-        for r in rows:
-            d = {"id": r[0], "concept": r[1], "subject": r[2],
-                 "created_at": r[3]}
-            idx = 4
-            if "topic" in cols:
-                d["topic"] = r[idx] or ""; idx += 1
+        try:
+            if resolved is None:
+                c.execute("""
+                    SELECT id, concept,
+                           COALESCE(subject, '') AS subject,
+                           COALESCE(topic, '')   AS topic,
+                           COALESCE(frequency, 1) AS frequency,
+                           last_seen
+                    FROM weak_concepts
+                    WHERE student_id = ?
+                    ORDER BY last_seen DESC
+                """, (student_id,))
             else:
-                d["topic"] = ""
-            if "frequency" in cols:
-                d["frequency"] = r[idx] or 1; idx += 1
-            else:
-                d["frequency"] = 1
-            if "last_seen" in cols:
-                d["last_seen"] = r[idx]; idx += 1
-            out.append(d)
-        return out
+                c.execute("""
+                    SELECT id, concept,
+                           COALESCE(subject, '') AS subject,
+                           COALESCE(topic, '')   AS topic,
+                           COALESCE(frequency, 1) AS frequency,
+                           last_seen
+                    FROM weak_concepts
+                    WHERE student_id = ? AND resolved = ?
+                    ORDER BY last_seen DESC
+                """, (student_id, 1 if resolved else 0))
+            rows = c.fetchall()
+            conn.close()
+            return [
+                {
+                    "id":        r[0],
+                    "concept":   r[1],
+                    "subject":   r[2],
+                    "topic":     r[3],
+                    "frequency": r[4],
+                    "last_seen": r[5],
+                }
+                for r in rows
+            ]
+        except sqlite3.OperationalError:
+            # subject column missing — run migration then return empty
+            try:
+                conn.execute(
+                    "ALTER TABLE weak_concepts ADD COLUMN subject TEXT DEFAULT ''"
+                )
+                conn.commit()
+            except Exception:
+                pass
+            conn.close()
+            return []
 
     def record_weak_concept(self, student_id: str, concept: str, subject: str = "") -> None:
         conn = self._conn()
@@ -646,6 +665,65 @@ class Database:
         row = c.fetchone()
         conn.close()
         return row[0] if row and row[0] else ""
+
+    def get_student_profile(self, student_id: str):
+        """Return a student profile dict, or None if not found."""
+        import json as _json
+        conn = self._conn()
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT student_id, name, subject, exam_date, preferred_language,
+                   weak_areas, student_type, al_stream, al_subjects
+            FROM students
+            WHERE student_id = ?
+            LIMIT 1
+            """,
+            (student_id,),
+        )
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return None
+
+        al_subjects = row[8] or "[]"
+        if isinstance(al_subjects, str):
+            try:
+                al_subjects = _json.loads(al_subjects)
+            except Exception:
+                al_subjects = []
+        if not isinstance(al_subjects, list):
+            al_subjects = []
+
+        return {
+            "student_id": row[0] or "",
+            "name": row[1] or "",
+            "subject": row[2] or "",
+            "exam_date": row[3] or "",
+            "preferred_language": row[4] or "English",
+            "weak_areas": row[5] or "",
+            "student_type": row[6] or "Undergraduate",
+            "al_stream": row[7] or "",
+            "al_subjects": al_subjects,
+        }
+
+    def get_latest_student_profile(self):
+        """Return the most recently saved student profile, or None."""
+        conn = self._conn()
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT student_id
+            FROM students
+            ORDER BY rowid DESC
+            LIMIT 1
+            """
+        )
+        row = c.fetchone()
+        conn.close()
+        if not row or not row[0]:
+            return None
+        return self.get_student_profile(row[0])
 
     # ── Lessons ───────────────────────────────────────────────────────────────
     def save_lesson(self, student_id: str = "", subject: str = "",

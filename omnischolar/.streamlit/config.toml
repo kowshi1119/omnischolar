@@ -10,8 +10,8 @@ gatherUsageStats = false
 fastReruns = true
 
 [theme]
-primaryColor     = "#0EA5E9"
-backgroundColor  = "#F8FAFC"
-secondaryBackgroundColor = "#EFF6FF"
-textColor        = "#0F172A"
+primaryColor     = "#00D4FF"
+backgroundColor  = "#060A14"
+secondaryBackgroundColor = "#080D1A"
+textColor        = "#C8DCF0"
 font             = "sans serif"
