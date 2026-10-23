@@ -421,10 +421,12 @@ def inject_premium_css():
     /* ══════════════════════════════════════
        HIDE STREAMLIT UI
     ══════════════════════════════════════ */
-    /* Hide only the toolbar: a bare `header` rule also hid nav section titles and the mobile sidebar toggle */
-    #MainMenu, footer, [data-testid="stToolbar"] { visibility: hidden !important; }
-    .stDeployButton { display: none !important; }
-    [data-testid="stToolbar"] { display: none !important; }
+    /* Hide the menu/deploy actions only. The sidebar expand button lives inside
+       stToolbar, so hiding the whole toolbar (or `header`) left phones with no way
+       to open navigation. */
+    #MainMenu, footer, .stDeployButton,
+    [data-testid="stToolbarActions"], [data-testid="stMainMenu"],
+    [data-testid="stAppDeployButton"] { display: none !important; }
 
     /* ══════════════════════════════════════
        MODE CARDS
@@ -726,7 +728,9 @@ def inject_premium_css():
         .omni-seal { display: none !important; }  /* fixed badge covers content */
         .omni-card > div { flex-wrap: wrap; }
         .block-container { padding-left: 1rem !important; padding-right: 1rem !important; }
-        .stButton > button { min-height: 44px; }  /* touch target */
+        .stButton > button,
+        [data-testid="stSidebarNavLink"] { min-height: 44px; }  /* touch targets */
+        [data-testid="stExpandSidebarButton"] { min-width: 44px; min-height: 44px; }
         [data-testid="stMain"] h2 { font-size: 1.35rem !important; }
     }
 
