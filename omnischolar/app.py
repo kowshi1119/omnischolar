@@ -14,7 +14,7 @@ st.set_page_config(
     page_title="OmniScholar",
     page_icon="&#x2B21;",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",  # collapsed on phones, open on desktop
 )
 
 from config import APP_DEBUG, OLLAMA_HOST, OLLAMA_MODEL
@@ -567,7 +567,7 @@ def _render_sidebar():
         pass  # Avatar never crashes the sidebar
 
 
-def _build_system_prompt(student, context=""):
+def _build_system_prompt(student, context="", mode=""):
     base = _safe_format(
         SYSTEM_PROMPT,
         name=student["name"],
@@ -576,6 +576,14 @@ def _build_system_prompt(student, context=""):
         weak_areas=student["weak_areas"] or "none specified",
         days_remaining=student["days_remaining"],
     )
+    # SYSTEM_PROMPT expects the profile as JSON and a [MODE:] tag per turn
+    profile = {k: student.get(k) for k in (
+        "name", "subject", "preferred_language", "weak_areas", "days_remaining",
+        "student_type", "al_stream", "al_subjects",
+    )}
+    base += f"\n\nSTUDENT PROFILE:\n{json.dumps(profile, ensure_ascii=False)}"
+    if mode:
+        base += f"\n\n[MODE: {mode}]"
     if context:
         base += f"\n\n[RETRIEVED CONTEXT]\n{context}"
     return base
@@ -623,7 +631,7 @@ def _handle_chat_mode(mode, student):
                     rag_context = ""
                     rag_sources = []
 
-        sys_prompt = _build_system_prompt(student, rag_context)
+        sys_prompt = _build_system_prompt(student, rag_context, mode=mode)
         messages = [{"role": "system", "content": sys_prompt}]
         for m in st.session_state["chat_history"][:-1]:
             messages.append(m)
@@ -653,17 +661,49 @@ _LLM_ERROR_PREFIX = "[OmniScholar]"
 
 
 def _score_quiz(quiz_text: str, user_answers: str) -> tuple:
-    """Score answers like "1:A 2:C" against the quiz's "Answer: X" lines.
+    """Score answers like "1:A 2:C" against the quiz's answer key.
 
     Returns (correct, total); total is 0 when no answer key could be parsed.
     """
-    key = re.findall(r"Answer\s*[:\-]\s*\**\s*\(?([A-D])\b", quiz_text, re.IGNORECASE)
+    key = [q["answer"] for q in _parse_quiz(quiz_text) or []] or re.findall(
+        r"Answer\s*[:\-]\s*\**\s*\(?([A-D])\b", quiz_text, re.IGNORECASE
+    )
     given = {
         int(n): letter.upper()
         for n, letter in re.findall(r"(\d+)\s*[:.)\-=]?\s*\(?([A-Da-d])\b", user_answers)
     }
     correct = sum(1 for i, ans in enumerate(key, start=1) if given.get(i) == ans.upper())
     return correct, len(key)
+
+
+def _parse_quiz(quiz_text: str):
+    """Parse the fine-tuned model's TEST_ME JSON into questions, or None if it isn't JSON."""
+    match = re.search(r"\{.*\}", quiz_text, re.DOTALL)
+    if not match:
+        return None
+    try:
+        questions = json.loads(match.group(0)).get("questions") or []
+    except (ValueError, AttributeError):
+        return None
+    return [
+        {
+            "text": q.get("question_text", ""),
+            "options": q.get("options") or [],
+            "answer": str(q.get("correct_answer", "")).strip()[:1].upper(),
+        }
+        for q in questions if isinstance(q, dict)
+    ] or None
+
+
+def _quiz_markdown(quiz_text: str) -> str:
+    """Quiz as the student should see it: readable, with the answer key hidden."""
+    questions = _parse_quiz(quiz_text)
+    if questions:
+        return "\n\n".join(
+            f"**{i}. {q['text']}**\n\n" + "\n".join(f"- {o}" for o in q["options"])
+            for i, q in enumerate(questions, start=1)
+        )
+    return re.sub(r"(?im)^\s*\**\s*Answer\s*[:\-].*$", "", quiz_text)
 
 
 def _handle_test_me(student):
@@ -690,7 +730,7 @@ def _handle_test_me(student):
             st.session_state["last_quiz_topic"] = topic or student["subject"]
             st.session_state.pop("_tm_saved_for", None)
     if "last_quiz" in st.session_state:
-        st.markdown(st.session_state["last_quiz"])
+        st.markdown(_quiz_markdown(st.session_state["last_quiz"]))
         st.divider()
         user_answers = st.text_area("Paste your answers (e.g. 1:A 2:C 3:B)", key="_tm_answers", height=80)
         if st.button("Check Answers", key="_tm_check"):
@@ -736,7 +776,7 @@ def _handle_find_weak_areas(student):
         )
         with st.spinner("Analysing..."):
             try:
-                analysis = _llm.chat([{"role": "system", "content": _build_system_prompt(student)}, {"role": "user", "content": prompt_text}])
+                analysis = _llm.chat([{"role": "system", "content": _build_system_prompt(student, mode="FIND_WEAK_AREAS")}, {"role": "user", "content": prompt_text}])
             except Exception as e:
                 analysis = f"Error: {e}"
         st.markdown(analysis)

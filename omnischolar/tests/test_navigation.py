@@ -272,7 +272,7 @@ class TestVirtualTeacher(unittest.TestCase):
     def test_virtual_teacher_imports(self):
         """VirtualTeacher class must be importable."""
         try:
-            from virtual_teacher import VirtualTeacher
+            from virtual_teacher import VirtualTeacher  # noqa: F401 (import check)
             self.assertTrue(True)
         except ImportError as e:
             self.fail(f"Cannot import VirtualTeacher: {e}")
