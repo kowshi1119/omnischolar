@@ -1,4 +1,4 @@
-streamlit>=1.50
+streamlit>=1.56
 ollama>=0.4.7
 chromadb>=0.5.23
 pymupdf>=1.25.0

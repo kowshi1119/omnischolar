@@ -1,5 +1,7 @@
 # Development improvements — October 2026
 
+Two rounds: **round 1** fixed broken core features; **round 2** (below the first section) redesigned the UI, sped up the model and made the app fully offline, guided by a research pass on learning science, local RAG, Ollama and Streamlit best practice.
+
 A full audit of the OmniScholar app (`omnischolar/`), followed by fixes verified
 with pytest, Streamlit `AppTest` and Playwright against the running app.
 
@@ -70,9 +72,72 @@ Responsive check (Playwright): no horizontal overflow at 320, 375, 390, 768, 102
 
 - **No authentication**: this is a single-user local app. A new browser session loads the most recently saved profile.
 - **Lighthouse not measured**: no Lighthouse tool was available. Streamlit pages are a client-rendered SPA, so SEO scores aren't meaningful for this app.
-- **Not fully offline yet**: Google Fonts and the Mermaid library still load from CDNs. They degrade gracefully without internet but should be vendored for true offline use.
-- **Weak concepts aren't recorded by Test Me**: wrong answers aren't written to `weak_concepts` yet; that data comes from other modes and the seed data.
 - **Cold model load**: the first request after Ollama starts can take longer than `OLLAMA_TIMEOUT=120`. Use 300 on slow machines.
 - **Upstream Streamlit console error**: `Recording error: Container not found` (wavesurfer, inside Streamlit's `ChatInput`) appears on some page reloads. It comes from Streamlit's bundle, not app code.
 - **Not exercised end-to-end with a live model**: Virtual Teacher lessons, Battle Game, Teacher paper generation and the 3A prediction flows. They render without errors (`AppTest`), but their LLM paths were not driven in the browser.
 - `venv/` in the workspace is broken (no pip); recreate it as described in the README.
+
+---
+
+# Round 2 — UI/UX redesign, speed, offline
+
+## Speed (measured on the 8 GB dev laptop, omnischolar-e2b-v2)
+
+| Change | Before | After |
+|---|---|---|
+| Gemma 4 hidden "thinking" turned off by default (`think=False`) | 6.0 s, 410 tokens per answer | 2.5 s, 62 tokens |
+| Learn page, first words of an answer (in the browser) | not measured | ≤3 s (full answer ~6 s) |
+| Test Me "Check answers" | second full LLM call | instant (explanations generated with the quiz) |
+| Model kept in RAM (`keep_alive`) + warm-up at start-up | cold start after 5 min idle | stays loaded |
+| Dashboard data | ~10 SQLite round-trips per rerun | one cached bundle (cleared on writes) |
+| Schema migrations | every rerun | once per server process |
+
+Quizzes, battle questions and tutor follow-ups use Ollama JSON-schema structured output instead of regex/fence stripping.
+
+## UI/UX
+
+- **Real pages** (`st.navigation`): Study / Practice / You sections with icons, a URL per page and working browser back. This replaced sidebar buttons, `st.rerun()` and a 12-branch `if/elif`.
+- **Slim sidebar**: logo, nav, a profile card with an edit dialog (onboarding on first visit), an answer-language switch that now persists, and an honest model status.
+  - The old header language toggle was silently reset by the sidebar selectbox.
+  - Demo reset moved to Settings.
+- **Home** page holds the dashboard, so Learn, Revise and Test Me no longer stack it above themselves. Hardcoded marketing badges were removed.
+- **Test Me** asks one radio question per item inside a form and gives per-question explanations. Wrong answers become weak areas.
+- **Learn / Revise** stream answers with `st.write_stream`, keep separate chat histories, and offer "New chat". Retrieved passages are labelled `[file page N]` so answers can cite pages.
+- **Accessibility**:
+  - Dim text raised from 2.35:1 to 5.9:1 contrast (WCAG AA).
+  - A global `header {visibility:hidden}` rule had hidden the nav section titles and the **mobile sidebar toggle**. On phones the navigation was unreachable.
+  - 44 px touch targets on mobile.
+- **Responsive**: no horizontal overflow at 320, 375, 390, 768, 1024 and 1920 px (Playwright).
+
+## Fully offline
+
+- Fonts (DM Sans, JetBrains Mono, Fraunces, Noto Sans Sinhala and Noto Sans Tamil; OFL) are vendored in `static/fonts` and registered with `[[theme.fontFaces]]`.
+- Mermaid 11.17.2 (MIT) ships as a local Streamlit component (`components/mermaid`). Streamlit's static folder serves `.js` as `text/plain`, so it can't host scripts.
+  - Model-written diagrams that fail to parse are retried with labels auto-quoted. Checked in the browser: the model's real binary-search diagram and pipe-label cases render after the fix.
+- Playwright saw **no requests to any non-local host**.
+
+## Retrieval
+
+- The default embedding model is now `embeddinggemma`, which covers 100+ languages including Sinhala and Tamil and uses its documented task prompts. `nomic-embed-text` is English-only.
+- Each embedding model gets its own collection. Chunks in an existing nomic index are re-embedded automatically from stored text, so no re-upload is needed.
+
+## Bugs fixed in round 2
+
+- Virtual Teacher lessons never came from the model: a `num_predict` argument raised a TypeError that was swallowed, so every lesson used the fallback.
+- CS Battle asked for a JSON *array* but parsed an object, so it almost always fell back to the built-in question bank.
+- `str.lstrip("```json")` strips a *character set*, so it could eat the first letters of valid JSON.
+- The language selection didn't stick (see UI above).
+
+## Research recommendations not implemented (yet)
+
+These come from the research pass, ranked by expected value:
+1. **FSRS spaced-repetition review queue** (`fsrs` on PyPI, MIT) for missed questions: the strongest evidence-backed learning feature.
+2. **Hint ladder enforced in code** for the Virtual Teacher. A PNAS 2025 study found an answer-giving GPT tutor lowered exam scores by 17%.
+3. **Per-topic Elo mastery** used to pick question difficulty. Today it is only used for display.
+4. Heading-aware chunking, and offline OCR (Tesseract) for scanned PDFs.
+5. Translated UI strings and Sinhala/Tamil text-to-speech voices. Currently only the model's answers change language.
+
+## Still not verified
+
+- Retrieval quality in Sinhala/Tamil: there are no public benchmarks for these languages, so it should be checked with real notes.
+- Battle Game, Teacher paper generation and 3A predictions with a live model in the browser. They render without errors under `AppTest`.

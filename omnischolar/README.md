@@ -8,13 +8,17 @@ OmniScholar is a fully offline, privacy-first exam preparation assistant built f
 
 ## Features
 
-- **LEARN** — Structured explanations with memory tips and citations from your own notes
-- **REVISE** — Examiner-ready summaries with common mistakes highlighted
-- **TEST ME** — Adaptive MCQ quizzes auto-generated from your subject and weak areas
-- **FIND WEAK AREAS** — Readiness report with percentage scores per topic
-- **STUDY PLAN** — Day-by-day schedule from today to your exam date
-- **PDF Upload** — Index your own lecture notes for RAG-powered answers
-- **Multilingual** — Supports English, Sinhala, and Tamil
+Each feature is its own page (sidebar sections **Study**, **Practice**, **You**), with a URL you can bookmark.
+
+- **Home**: readiness, exam countdown, streak, today's focus topic and shortcuts
+- **Learn / Revise**: streamed explanations or exam-focused summaries that cite the page of your notes they used
+- **Test Me**: multiple-choice quizzes with instant per-question explanations. Results feed your streak, readiness and weak areas
+- **Virtual Teacher**: step-by-step lessons with diagrams, mid-lesson checks and voice narration
+- **Past Papers, CS Battle, Study Plan, Weak Areas, Teacher Mode**: practice and planning tools
+- **3A Achievement / My Progress**: Elo readiness for A/L students
+- **My Notes**: upload PDFs to ground answers in your own material
+- **Answer language**: English, Sinhala or Tamil, switchable from the sidebar
+- **Fully offline**: the model, fonts and diagram renderer all run on your machine
 
 ---
 
@@ -30,7 +34,7 @@ OmniScholar is a fully offline, privacy-first exam preparation assistant built f
 
 ```bash
 ollama pull gemma4:e2b
-ollama pull nomic-embed-text
+ollama pull embeddinggemma   # multilingual embeddings (English, Sinhala, Tamil)
 ollama pull gemma4:e4b   # optional: only for the image explainer (vision)
 ```
 
@@ -64,6 +68,13 @@ cp .env.example .env
 
 Real environment variables take precedence over `.env`.
 
+**Ollama server settings (8 GB laptops).** These are read by the Ollama server, not by
+the app, so set them as Windows user environment variables and restart Ollama:
+`OLLAMA_FLASH_ATTENTION=1` and `OLLAMA_KV_CACHE_TYPE=q8_0` (about half the context
+memory), `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_LOADED_MODELS=2` (chat model + embedder).
+The app itself keeps the model loaded (`OLLAMA_KEEP_ALIVE`, default 30 minutes), warms it
+up at start-up, and turns off Gemma 4's hidden "thinking" for regular answers.
+
 ### 4. Run
 
 ```bash
@@ -95,7 +106,8 @@ CI runs the same commands on every push and pull request (`.github/workflows/ci.
 
 ```
 omnischolar/
-├── app.py             # Streamlit entry point: sidebar, dashboard, Learn/Revise/Test Me
+├── app.py             # Entry point: st.navigation pages, sidebar, Home, Learn/Revise, Test Me
+├── nav.py             # Page registry so modules can switch pages (nav.go("TEST_ME"))
 ├── config.py          # Settings from environment / .env
 ├── database.py        # SQLite persistence and idempotent migrations
 ├── rag.py             # PDF ingestion, hybrid (dense + BM25) retrieval
@@ -104,6 +116,8 @@ omnischolar/
 ├── ui_components.py   # Design system CSS and shared UI components
 ├── virtual_teacher.py, teacher.py, past_paper.py, battle_game.py,
 │   study_plan.py, weakness.py, achievement_3a.py   # one module per mode
+├── components/mermaid/ # Offline Mermaid diagram component (vendored mermaid.min.js)
+├── static/            # Vendored fonts and logo (served at /app/static)
 ├── tests/             # pytest suite
 └── study_db/          # ChromaDB store (created on first PDF upload)
 ```
@@ -116,7 +130,7 @@ omnischolar/
 |---|---|
 | Frontend | Streamlit |
 | LLM | Gemma 4 / OmniScholar fine-tune via Ollama (fully local) |
-| Embeddings | `nomic-embed-text` via Ollama |
+| Embeddings | `embeddinggemma` via Ollama (multilingual; older `nomic-embed-text` indexes are migrated automatically) |
 | Retrieval | ChromaDB (dense) + rank-bm25, fused with Reciprocal Rank Fusion |
 | Database | SQLite |
 | PDF Parsing | PyMuPDF |
