@@ -246,6 +246,59 @@ Answer: 1, 3, 4, 5, 7 (always sorted for valid BST)""",
 
 **Exam trap:** Conditions 4 ALL present වෙනවිට ONLY deadlock occur වෙනවා — 3 conditions ලෙස ලිවීම wrong!""",
     },
+    {
+        "instruction": "Stack data structure සිංහලෙන් explain කරන්න",
+        "response": """Stack යනු Last-In-First-Out (LIFO) principle follow කරන data structure එකයි.
+
+**Real analogy:** Plate stack — කොළොවට plate add කරනවා, remove කරන්නේත් කොළොවෙන්ම.
+
+**Operations:**
+- Push: Stack top ට element add කරනවා → O(1)
+- Pop: Top element remove කරනවා → O(1)
+- Peek: Top element බලනවා (remove නොකර) → O(1)
+
+**Python code:**
+```python
+stack = []
+stack.append(10)  # Push
+stack.append(20)  # Push
+print(stack.pop())  # Pop → 20 (LIFO)
+print(stack[-1])    # Peek → 10
+```
+
+**Uses:**
+- Function call stack (recursion)
+- Undo operations
+- Expression evaluation
+- DFS algorithm
+
+**Exam trap:** Stack overflow = recursion infinite loop නිසා stack memory full වීම.""",
+    },
+    {
+        "instruction": "Binary search algorithm O(log n) complexity ඇයි?",
+        "response": """Binary search O(log n) complexity ඇත්තේ search space ගෙන් half කරගෙන යන නිසායි.
+
+**Step-by-step explanation:**
+- Array size n → after 1st comparison → n/2 elements remain
+- After 2nd comparison → n/4 elements remain
+- After kth comparison → n/2^k elements remain
+
+**When does search end?**
+n/2^k = 1 → k = log₂(n) steps
+
+**Example with n=8:**
+[1,3,5,7,9,11,13,15] → target=11
+
+Step 1: mid=arr[3]=7 < 11 → right half [9,11,13,15]
+Step 2: mid=arr[5]=11 = 11 → FOUND!
+
+Only 2 steps for 8 elements = log₂(8) = 3 maximum steps
+
+**Comparison with linear search:**
+n=1000: Binary → max 10 steps, Linear → max 1000 steps
+
+**Prerequisite:** Array must be SORTED first.""",
+    },
 ]
 
 TAMIL_EXAMPLES = [
@@ -268,6 +321,67 @@ TAMIL_EXAMPLES = [
 **தடுப்பு முறை:** எந்த ஒரு condition-ஐயும் நீக்கினால் Deadlock தடுக்கலாம்.
 
 **தேர்வு தவறு:** 3 conditions என எழுதுவது தவறு — சரியான விடை 4 conditions!""",
+    },
+    {
+        "instruction": "OOP inheritance பற்றி Tamil-ல் விளக்கவும்",
+        "response": """Inheritance என்பது ஒரு class (child) மற்றொரு class-ஐ (parent) extend செய்து அதன் properties மற்றும் methods பெறும் mechanism.
+
+**உண்மை உதாரணம்:** Animal → Dog, Cat இரண்டும் Animal. அதனால் makeSound(), move() methods இரண்டிலும் உண்டு.
+
+**Python Code:**
+```python
+class Animal:
+    def __init__(self, name):
+        self.name = name
+    def makeSound(self):
+        print("Some sound")
+
+class Dog(Animal):      # Dog IS-A Animal
+    def makeSound(self):    # Override
+        print("Woof!")
+    def fetch(self):        # New method
+        print("Fetching!")
+
+d = Dog("Rex")
+d.name      # Rex (inherited)
+d.makeSound()  # Woof! (overridden)
+d.fetch()      # Fetching!
+```
+
+**Types:**
+- Single: Dog extends Animal
+- Multilevel: Puppy extends Dog extends Animal
+- Hierarchical: Dog, Cat both extend Animal
+
+**Java-ல் multiple inheritance இல்லை** — Interface மூலம் simulate செய்யலாம்.
+
+**தேர்வு தவறு:** "Dog HAS-A Animal" என எழுதுவது தவறு. சரியான விடை "Dog IS-A Animal".""",
+    },
+    {
+        "instruction": "Linked list vs Array வித்தியாசம் என்ன?",
+        "response": """Array மற்றும் Linked List இரண்டும் linear data structures ஆனால் memory organization வேறு.
+
+**Array:**
+- Contiguous memory (அடுத்தடுத்த memory locations)
+- Random access: O(1) — index மூலம் நேரடியாக access
+- Insert/Delete middle: O(n) — shift செய்ய வேண்டும்
+- Fixed size (static array)
+
+**Linked List:**
+- Non-contiguous memory (scattered locations)
+- Sequential access: O(n) — head முதல் traverse
+- Insert/Delete at known position: O(1)
+- Dynamic size
+
+**எப்போது எதை பயன்படுத்துவது:**
+Array → Random access தேவை, size தெரியும்
+Linked List → Frequent insert/delete, size dynamic
+
+**Memory:**
+Array: n × sizeof(element)
+Linked List: n × (sizeof(element) + sizeof(pointer))
+
+**தேர்வு முக்கியம்:** Linked List-ல் random access O(n) — இது array-ஐ விட மெதுவாக உள்ளது.""",
     },
 ]
 

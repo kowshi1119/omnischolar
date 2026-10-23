@@ -279,40 +279,67 @@ Return ONLY valid JSON, zero text outside it:
 
 # ── Virtual Teacher Enhanced Prompts ─────────────────────────────────────────
 
-VIRTUAL_TEACHER_DIAGRAM_PROMPT = """Generate a Mermaid diagram for: {topic}
+VIRTUAL_TEACHER_DIAGRAM_PROMPT = """Generate a Mermaid diagram for this exact topic: {topic}
 Subject: {subject}
 
-Choose the BEST diagram type for this concept:
-- flowchart TD  -> algorithms, processes, decision flows
-- classDiagram  -> OOP, data structures, relationships
-- sequenceDiagram -> OS interactions, network protocols, step sequences
-- stateDiagram-v2 -> state machines, process states (CPU states, TCP states)
-- graph LR      -> simple concept maps, hierarchies
+CRITICAL RULES:
+1. Use REAL technical terms — NEVER write "Core Concept" or "How It Works" or "Key Concept" or "Why It Matters"
+2. Node labels must be ACTUAL CS concepts (e.g. "Process P1", "Resource R1", "mutex lock", "Stack Frame")
+3. Choose diagram type based on topic:
+   - Deadlock, scheduling, algorithms → flowchart TD
+   - OOP, data structures, inheritance → classDiagram
+   - TCP, protocols, authentication → sequenceDiagram
+   - Process states, FSM → stateDiagram-v2
+   - Memory, CPU architecture → graph LR
 
-QUALITY RULES:
-- Use SPECIFIC names not generic labels (NOT "Node1" -> USE "BankAccount")
-- Add style lines to make important nodes stand out
-- For algorithms: show the DATA not abstract symbols (use [5,3,8,1,9] not [arr])
-- Maximum 8 nodes for clarity
-- Every arrow must have a meaningful label
+EXAMPLES OF WHAT TO GENERATE:
 
-STYLE ALL NODES with dark theme:
-  style NodeName fill:#1A3050,stroke:#00D4FF,color:#E8F4FF,stroke-width:2px
+For "Deadlock":
+flowchart TD
+    P1[Process P1] -->|holds| R1[Resource A]
+    P1 -->|waiting for| R2[Resource B]
+    P2[Process P2] -->|holds| R2[Resource B]
+    P2 -->|waiting for| R1[Resource A]
+    style P1 fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
+    style P2 fill:#1A2540,stroke:#FFB800,color:#E8F0FF
+    style R1 fill:#0D1B35,stroke:#EF4444,color:#E8F0FF
+    style R2 fill:#0D1B35,stroke:#EF4444,color:#E8F0FF
 
-Return ONLY raw Mermaid code. No fences. No explanation.
-
-Example for Binary Search Tree:
+For "Binary Search Tree":
 graph TD
-    N5[5 ROOT] --> N3[3]
-    N5 --> N7[7]
-    N3 --> N1[1]
-    N3 --> N4[4]
-    style N5 fill:#1A3050,stroke:#00D4FF,color:#E8F4FF,stroke-width:3px
-    style N3 fill:#0D1E35,stroke:#00A0C0,color:#C0D8F0,stroke-width:2px
-    style N7 fill:#0D1E35,stroke:#00A0C0,color:#C0D8F0,stroke-width:2px
-    style N1 fill:#0A1628,stroke:#4A7090,color:#8AAAC0,stroke-width:1px
-    style N4 fill:#0A1628,stroke:#4A7090,color:#8AAAC0,stroke-width:1px
-"""
+    A[50] --> B[30]
+    A --> C[70]
+    B --> D[20]
+    B --> E[40]
+    C --> F[60]
+    C --> G[80]
+    style A fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
+    style B fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
+    style C fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
+
+For "OOP Inheritance":
+classDiagram
+    Animal <|-- Dog
+    Animal <|-- Cat
+    Animal : +String name
+    Animal : +makeSound()
+    Dog : +fetch()
+    Cat : +purr()
+
+For "Process States":
+stateDiagram-v2
+    [*] --> New
+    New --> Ready : admitted
+    Ready --> Running : scheduler dispatch
+    Running --> Ready : interrupt
+    Running --> Waiting : I/O request
+    Waiting --> Ready : I/O complete
+    Running --> Terminated : exit
+
+Now generate the diagram for: {topic}
+Return ONLY the raw Mermaid code.
+No markdown fences. No explanation. No generic labels.
+Every node must use real technical terminology."""
 
 VIRTUAL_TEACHER_MID_QUESTION_PROMPT = """You are Dr. Omni mid-lesson.
 Subject: {subject} | Topic: {topic} | Language: {language}

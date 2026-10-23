@@ -8,13 +8,17 @@ OmniScholar is a fully offline, privacy-first exam preparation assistant built f
 
 ## Features
 
-- **LEARN** — Structured explanations with memory tips and citations from your own notes
-- **REVISE** — Examiner-ready summaries with common mistakes highlighted
-- **TEST ME** — Adaptive MCQ quizzes auto-generated from your subject and weak areas
-- **FIND WEAK AREAS** — Readiness report with percentage scores per topic
-- **STUDY PLAN** — Day-by-day schedule from today to your exam date
-- **PDF Upload** — Index your own lecture notes for RAG-powered answers
-- **Multilingual** — Supports English, Sinhala, and Tamil
+Each feature is its own page (sidebar sections **Study**, **Practice**, **You**), with a URL you can bookmark.
+
+- **Home**: readiness, exam countdown, streak, today's focus topic and shortcuts
+- **Learn / Revise**: streamed explanations or exam-focused summaries that cite the page of your notes they used
+- **Test Me**: multiple-choice quizzes with instant per-question explanations. Results feed your streak, readiness and weak areas
+- **Virtual Teacher**: step-by-step lessons with diagrams, mid-lesson checks and voice narration
+- **Past Papers, CS Battle, Study Plan, Weak Areas, Teacher Mode**: practice and planning tools
+- **3A Achievement / My Progress**: Elo readiness for A/L students
+- **My Notes**: upload PDFs to ground answers in your own material
+- **Answer language**: English, Sinhala or Tamil, switchable from the sidebar
+- **Fully offline**: the model, fonts and diagram renderer all run on your machine
 
 ---
 
@@ -22,59 +26,79 @@ OmniScholar is a fully offline, privacy-first exam preparation assistant built f
 
 ### Prerequisites
 
-- Python 3.10+
+- Python 3.10+ (tested on 3.12, Windows 11)
 - [Ollama](https://ollama.com) installed and running
+- ~8 GB RAM is enough for `gemma4:e2b` or the OmniScholar fine-tune
 
-### 1. Pull required models
+### 1. Pull models
 
 ```bash
-ollama pull gemma4:e4b
-ollama pull nomic-embed-text
+ollama pull gemma4:e2b
+ollama pull embeddinggemma   # multilingual embeddings (English, Sinhala, Tamil)
+ollama pull gemma4:e4b   # optional: only for the image explainer (vision)
 ```
 
-### 2. Clone the repo
+To use the fine-tuned model instead, create it from a Modelfile
+(`ollama create omnischolar-e2b-v2 -f Modelfile`) and set `OLLAMA_MODEL` in `.env`.
+
+### 2. Install
 
 ```bash
 git clone https://github.com/kowshi1119/omnischolar.git
-cd omnischolar
-```
-
-### 3. Create a virtual environment
-
-```bash
+cd omnischolar/omnischolar
 python -m venv venv
-# Windows
-venv\Scripts\activate
-# macOS/Linux
-source venv/bin/activate
-```
-
-### 4. Install dependencies
-
-```bash
+venv\Scripts\activate        # macOS/Linux: source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 5. Configure environment variables
+### 3. Configure
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and fill in your values:
+| Variable | Default | Purpose |
+|---|---|---|
+| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama server (`localhost` is rewritten to `127.0.0.1` to avoid a ~2s IPv6 fallback on Windows) |
+| `OLLAMA_MODEL` | `gemma4:e2b` | Chat model; falls back to an installed gemma4 model |
+| `OLLAMA_VISION_MODEL` | `gemma4:e4b` | Image explainer |
+| `OLLAMA_TIMEOUT` | `120` | Request timeout in seconds; raise it (e.g. 300) if the first answer times out while the model loads |
+| `SQLITE_DB_PATH`, `CHROMA_DB_PATH` | `./omnischolar.db`, `./study_db` | Data location, relative to this folder |
+| `APP_DEBUG` | `False` | Show full tracebacks in the UI |
 
-```env
-OLLAMA_HOST=http://localhost:11434
-HUGGINGFACE_TOKEN=your_token_here   # optional, not required for core features
-```
+Real environment variables take precedence over `.env`.
 
-### 6. Run the app
+**Ollama server settings (8 GB laptops).** These are read by the Ollama server, not by
+the app, so set them as Windows user environment variables and restart Ollama:
+`OLLAMA_FLASH_ATTENTION=1` and `OLLAMA_KV_CACHE_TYPE=q8_0` (about half the context
+memory), `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_LOADED_MODELS=2` (chat model + embedder).
+The app itself keeps the model loaded (`OLLAMA_KEEP_ALIVE`, default 30 minutes), warms it
+up at start-up, and turns off Gemma 4's hidden "thinking" for regular answers.
+
+### 4. Run
 
 ```bash
-streamlit run app.py
+python -m streamlit run app.py
 ```
 
-Open your browser at `http://localhost:8501`.
+Open http://localhost:8501. The server binds to `localhost` only (there is no login);
+set `address` in `.streamlit/config.toml` to share it on a LAN.
+
+If Ollama is not running, the app still opens: progress, history and study plans
+work, and AI features show a clear message until `ollama serve` is started.
+
+### 5. Test
+
+```bash
+pip install pytest ruff
+ruff check . --select E9,F63,F7,F82
+pytest tests -q
+```
+
+Tests use a temporary database and vector store and do not need Ollama.
+They render every mode with Streamlit's `AppTest`, and cover the database,
+the PDF ingestion and retrieval pipeline, and quiz scoring.
+CI runs the same commands on every push and pull request (`.github/workflows/ci.yml`).
 
 ---
 
@@ -82,14 +106,20 @@ Open your browser at `http://localhost:8501`.
 
 ```
 omnischolar/
-├── app.py           # Main Streamlit UI and orchestration
-├── database.py      # SQLite persistence (student profiles, quiz history)
-├── rag.py           # PDF ingestion and ChromaDB vector retrieval
-├── prompt.py        # System prompt and mode definitions
-├── requirements.txt # Python dependencies
-├── .env.example     # Environment variable template
-├── .gitignore       # Excludes secrets and generated files
-└── study_db/        # ChromaDB vector store (auto-created on first PDF upload)
+├── app.py             # Entry point: st.navigation pages, sidebar, Home, Learn/Revise, Test Me
+├── nav.py             # Page registry so modules can switch pages (nav.go("TEST_ME"))
+├── config.py          # Settings from environment / .env
+├── database.py        # SQLite persistence and idempotent migrations
+├── rag.py             # PDF ingestion, hybrid (dense + BM25) retrieval
+├── ollama_client.py   # Chat / stream / embed wrapper around Ollama
+├── prompt.py          # System prompt and mode definitions
+├── ui_components.py   # Design system CSS and shared UI components
+├── virtual_teacher.py, teacher.py, past_paper.py, battle_game.py,
+│   study_plan.py, weakness.py, achievement_3a.py   # one module per mode
+├── components/mermaid/ # Offline Mermaid diagram component (vendored mermaid.min.js)
+├── static/            # Vendored fonts and logo (served at /app/static)
+├── tests/             # pytest suite
+└── study_db/          # ChromaDB store (created on first PDF upload)
 ```
 
 ---
@@ -99,12 +129,12 @@ omnischolar/
 | Component | Technology |
 |---|---|
 | Frontend | Streamlit |
-| LLM | Gemma 4 via Ollama (fully local) |
-| Embeddings | `nomic-embed-text` via Ollama |
-| Vector Store | ChromaDB |
+| LLM | Gemma 4 / OmniScholar fine-tune via Ollama (fully local) |
+| Embeddings | `embeddinggemma` via Ollama (multilingual; older `nomic-embed-text` indexes are migrated automatically) |
+| Retrieval | ChromaDB (dense) + rank-bm25, fused with Reciprocal Rank Fusion |
 | Database | SQLite |
-| PDF Parsing | PyMuPDF (fitz) |
-| Env Config | python-dotenv |
+| PDF Parsing | PyMuPDF |
+| Testing | pytest, Streamlit AppTest, Playwright (manual E2E) |
 
 ---
 

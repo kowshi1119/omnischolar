@@ -22,7 +22,6 @@ CS_TOPICS = [
 ]
 
 
-import streamlit.components.v1 as components
 
 
 def _render_rope(position: int, score: int = 0, streak: int = 0) -> None:
@@ -45,7 +44,7 @@ def _render_rope(position: int, score: int = 0, streak: int = 0) -> None:
     </div>
     """
 
-    components.html(f"""
+    st.iframe(f"""
     <style>
       @keyframes ropeWiggle {{
         0%,100% {{ transform: scaleY(1); }}
@@ -109,6 +108,18 @@ def _render_rope(position: int, score: int = 0, streak: int = 0) -> None:
     """, height=100)
 
 
+_QUESTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "question": {"type": "string"},
+        "options": {"type": "array", "items": {"type": "string"}, "minItems": 4, "maxItems": 4},
+        "correct": {"type": "string", "enum": ["A", "B", "C", "D"]},
+        "explanation": {"type": "string"},
+    },
+    "required": ["question", "options", "correct"],
+}
+
+
 def _fetch_question(topic: str, difficulty: str, llm) -> dict | None:
     """Fetch a single MCQ. Falls back to local question bank if LLM fails."""
     # Try LLM first
@@ -117,8 +128,9 @@ def _fetch_question(topic: str, difficulty: str, llm) -> dict | None:
         import json
         raw = llm.fast_chat(
             message=prompt,
-            system="Return ONLY valid JSON array. No markdown. No prose.",
+            system="Return ONLY valid JSON. No markdown. No prose.",
             max_tokens=300,
+            format=_QUESTION_SCHEMA,  # one object; the old prompt asked for an array the code can't read
         )
         raw = raw.strip()
         # Strip markdown fences
@@ -154,7 +166,6 @@ def _fetch_question(topic: str, difficulty: str, llm) -> dict | None:
 
 def _get_fallback_question(topic: str, difficulty: str) -> dict:
     """Local question bank — always works, no Ollama needed."""
-    import random
     bank = {
         "Data Structures": [
             {"question": "Which data structure uses LIFO (Last In, First Out)?",

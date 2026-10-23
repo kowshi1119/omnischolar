@@ -1,20 +1,32 @@
 # ollama_client.py — Gemma 4 interface
 # OmniScholar | wraps the ollama library for chat and embeddings
 
-import concurrent.futures
-import os
 from typing import Iterator
 
 import ollama
 
-OLLAMA_HOST        = os.getenv("OLLAMA_HOST",        "http://localhost:11434")
-OLLAMA_MODEL       = os.getenv("OLLAMA_MODEL",       "gemma4:latest")
-OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
-OLLAMA_NUM_CTX     = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
+from config import (
+    OLLAMA_EMBED_MODEL,
+    OLLAMA_HOST,
+    OLLAMA_KEEP_ALIVE,
+    OLLAMA_MODEL,
+    OLLAMA_NUM_CTX,
+    OLLAMA_TIMEOUT,
+)
+
+# Context window presets — choose the smallest that fits the task
+FAST_CTX  = 2048   # quiz grading, short evaluations, battle questions
+STUDY_CTX = 4096   # explanations, revise, virtual teacher turns
+DEEP_CTX  = 8192   # full lesson generation, paper summarizer
 
 
 class OllamaClient:
-    """Thin wrapper around the ollama Python SDK."""
+    """Thin wrapper around the ollama Python SDK.
+
+    Gemma 4 "thinks" by default, which spent ~85% of generated tokens on hidden
+    reasoning in measurements (6.0s -> 2.5s per answer with it off), so calls
+    disable it unless a caller opts in with think=True.
+    """
 
     def __init__(
         self,
@@ -27,12 +39,18 @@ class OllamaClient:
         self.model       = model
         self.embed_model = embed_model
         self.num_ctx     = num_ctx
-        self._client     = ollama.Client(host=host)
+        self._client     = ollama.Client(host=host, timeout=OLLAMA_TIMEOUT)
+        self._resolved   = None
 
-    # ── pick best available gemma4 model ─────────────────────────────────────
+    # ── pick the model to use ────────────────────────────────────────────────
     def _resolve_model(self) -> str:
-        """Return the best available Gemma 4 model name."""
-        preferred = ("gemma4:e4b", "gemma4:latest", "gemma4")
+        """Return the configured model if installed, else the best Gemma 4 fallback.
+
+        Resolved once per client; a failed lookup is retried on the next call.
+        """
+        if self._resolved:
+            return self._resolved
+        preferred = (self.model, f"{self.model}:latest", "gemma4:e2b", "gemma4:e4b", "gemma4:latest")
         try:
             response = self._client.list()
             available = []
@@ -40,58 +58,67 @@ class OllamaClient:
                 name = getattr(item, "model", None) or (item.get("model") if isinstance(item, dict) else None)
                 if name:
                     available.append(name)
-            for candidate in preferred:
-                if candidate in available:
-                    return candidate
-            for name in available:
-                if "gemma4" in name:
-                    return name
+            choice = next((c for c in preferred if c in available), None)
+            choice = choice or next((n for n in available if "gemma4" in n and "cloud" not in n), None)
+            if choice:
+                self._resolved = choice
+                return choice
         except Exception:
             pass
         return self.model
+
+    @staticmethod
+    def _build_messages(messages: list, system_prompt: str) -> list:
+        api_messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
+        api_messages.extend(messages)
+        return api_messages
+
+    def _request(self, model, messages, options, think, format, stream=False):
+        return self._client.chat(
+            model=model,
+            messages=messages,
+            options=options,
+            think=think,
+            format=format,
+            keep_alive=OLLAMA_KEEP_ALIVE,  # keep weights in RAM between turns
+            stream=stream,
+        )
+
+    # ── warm-up ───────────────────────────────────────────────────────────────
+    def warmup(self) -> bool:
+        """Load the model into memory so the student's first question isn't a cold start."""
+        try:
+            self._request(self._resolve_model(), [{"role": "user", "content": "hi"}],
+                          {"num_predict": 1, "num_ctx": self.num_ctx}, False, None)
+            return True
+        except Exception:
+            return False
 
     # ── non-streaming chat ────────────────────────────────────────────────────
     def chat(
         self,
         messages:      list,
-        system_prompt: str  = "",
-        thinking:      bool = False,
+        system_prompt: str   = "",
+        thinking:      bool  = False,
         temperature:   float = 0.7,
         num_ctx:       int   = None,
         num_predict:   int   = None,
+        format=None,
     ) -> str:
         """
         Send a chat request and return the full response text.
         Prepends system_prompt as a system message when provided.
+        `format` may be "json" or a JSON schema dict (Ollama structured outputs).
         """
-        api_messages = []
-        if system_prompt:
-            api_messages.append({"role": "system", "content": system_prompt})
-        api_messages.extend(messages)
-
         model = self._resolve_model()
-        options = {
-            "num_ctx":     num_ctx if num_ctx is not None else self.num_ctx,
-            "temperature": temperature,
-            "num_predict": num_predict if num_predict is not None else int(os.getenv("OLLAMA_NUM_PREDICT", "512")),
-            "num_batch":   int(os.getenv("OLLAMA_NUM_BATCH", "512")),
-        }
+        options = {"num_ctx": num_ctx if num_ctx is not None else self.num_ctx, "temperature": temperature}
+        if num_predict is not None:
+            options["num_predict"] = num_predict
 
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(
-                    self._client.chat,
-                    model=model,
-                    messages=api_messages,
-                    options=options,
-                )
-                try:
-                    response = future.result(timeout=120)
-                except concurrent.futures.TimeoutError:
-                    return (
-                        "[OmniScholar] Response timed out after 2 minutes. "
-                        "Try reducing question count or restarting Ollama."
-                    )
+            # The client's HTTP timeout (OLLAMA_TIMEOUT) bounds the request
+            response = self._request(model, self._build_messages(messages, system_prompt),
+                                     options, thinking, format)
             # Handle both dict and object responses
             if hasattr(response, "message"):
                 return response.message.content
@@ -109,29 +136,14 @@ class OllamaClient:
         system_prompt: str  = "",
         temperature:   float = 0.7,
         num_ctx:       int   = None,
-        num_predict:   int   = None,
     ) -> Iterator[str]:
         """Stream chat tokens. Yields string chunks."""
-        api_messages = []
-        if system_prompt:
-            api_messages.append({"role": "system", "content": system_prompt})
-        api_messages.extend(messages)
-
         model = self._resolve_model()
-        options = {
-            "num_ctx":     num_ctx if num_ctx is not None else self.num_ctx,
-            "temperature": temperature,
-            "num_predict": num_predict if num_predict is not None else int(os.getenv("OLLAMA_NUM_PREDICT", "512")),
-            "num_batch":   int(os.getenv("OLLAMA_NUM_BATCH", "512")),
-        }
+        options = {"num_ctx": num_ctx if num_ctx is not None else self.num_ctx, "temperature": temperature}
 
         try:
-            for chunk in self._client.chat(
-                model=model,
-                messages=api_messages,
-                stream=True,
-                options=options,
-            ):
+            for chunk in self._request(model, self._build_messages(messages, system_prompt),
+                                       options, False, None, stream=True):
                 content = (
                     chunk.message.content
                     if hasattr(chunk, "message")
@@ -147,8 +159,7 @@ class OllamaClient:
     # ── embeddings ────────────────────────────────────────────────────────────
     def embed(self, text: str) -> list:
         """Return embedding vector for a string."""
-        result = ollama.embeddings(model=self.embed_model, prompt=text)
-        return result["embedding"]
+        return list(self._client.embed(model=self.embed_model, input=text)["embeddings"][0])
 
     # ── fast chat (speed-optimised for short-output tasks) ────────────────────
     def fast_chat(
@@ -156,30 +167,22 @@ class OllamaClient:
         message: str,
         system: str = "",
         max_tokens: int = 2048,
+        format=None,
     ) -> str:
         """
         Optimised for speed: minimal context window, low temperature, capped output.
         Use for quiz evaluation, battle questions, grounding checks, any < 200 word output.
         """
-        api_messages = []
-        if system:
-            api_messages.append({"role": "system", "content": system})
-        api_messages.append({"role": "user", "content": message})
-
-        # Always use e2b for fast calls — faster inference
-        model = "gemma4:e2b"
+        model = self._resolve_model()
         options = {
-            "num_ctx": 2048,       # minimal context — faster decode
+            "num_ctx": FAST_CTX,   # minimal context — faster decode
             "temperature": 0.3,    # lower temp = faster + more deterministic
             "num_predict": max_tokens,
         }
 
         try:
-            response = self._client.chat(
-                model=model,
-                messages=api_messages,
-                options=options,
-            )
+            response = self._request(model, self._build_messages(
+                [{"role": "user", "content": message}], system), options, False, format)
             if hasattr(response, "message"):
                 return response.message.content
             return response["message"]["content"]

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- Offline Mermaid renderer: a Streamlit v1 component with no build step.
+     mermaid.min.js is vendored (mermaid@11.17.2, MIT). -->
+<style>
+  body { background: transparent; margin: 0; padding: 0; font-family: "JetBrains Mono", monospace; }
+  .diagram-wrapper {
+    background: linear-gradient(145deg, #0A1628, #0E1E3C);
+    border: 1px solid rgba(0,180,166,0.25);
+    border-radius: 12px;
+    padding: 20px;
+    margin: 4px 0;
+    overflow-x: auto;
+  }
+  .title { font-size: 10px; color: #00D4C8; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 12px; }
+  #diagram svg { max-width: 100%; height: auto; }
+  .error { color: #FF6B78; font-size: 0.8rem; padding: 10px; background: rgba(255,71,87,0.1);
+           border: 1px solid rgba(255,71,87,0.25); border-radius: 6px; }
+  .error pre { color: #8899AA; white-space: pre-wrap; font-size: 0.7rem; margin-top: 8px; }
+</style>
+<script src="mermaid.min.js"></script>
+</head>
+<body>
+<div class="diagram-wrapper">
+  <div class="title" id="title" hidden></div>
+  <div id="diagram"></div>
+</div>
+<script>
+  function send(type, data) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data), "*");
+  }
+  function setHeight() { send("streamlit:setFrameHeight", { height: document.body.scrollHeight + 4 }); }
+
+  // Small models write labels like A[f((x + y) / 2)] that Mermaid can't parse unquoted.
+  // Wrap every node label in quotes, matching brackets so nested ones survive.
+  function quoteLabels(code) {
+    const close = { "[": "]", "{": "}", "(": ")" };
+    return code.split("\n").map(function (line) {
+      // "A -- text --> B" edge labels become "A -->|"text"| B"
+      line = line.replace(/--\s+(.+?)\s+-->/g, function (_, t) {
+        return "-->|" + t + "|";
+      });
+      let out = "", i = 0;
+      while (i < line.length) {
+        if (line[i] === "|") {  // edge label: quote it, don't parse inside
+          const end = line.indexOf("|", i + 1);
+          if (end > i) {
+            const t = line.slice(i + 1, end);
+            out += t.startsWith('"') ? "|" + t + "|" : '|"' + t.replace(/"/g, "#quot;") + '"|';
+            i = end + 1;
+            continue;
+          }
+        }
+        const m = /^[A-Za-z0-9_]+/.exec(line.slice(i));
+        if (m && (i === 0 || /[\s>|;&-]/.test(line[i - 1]))) {
+          const j = i + m[0].length, open = line[j];
+          if (close[open] && line[j + 1] !== '"') {
+            let depth = 0, k = j;
+            for (; k < line.length; k++) {
+              if (line[k] === open) depth++;
+              else if (line[k] === close[open] && --depth === 0) break;
+            }
+            if (k < line.length) {
+              out += m[0] + open + '"' + line.slice(j + 1, k).replace(/"/g, "#quot;") + '"' + close[open];
+              i = k + 1;
+              continue;
+            }
+          }
+          out += m[0]; i = j;
+          continue;
+        }
+        out += line[i]; i++;
+      }
+      return out;
+    }).join("\n");
+  }
+
+  mermaid.initialize({
+    startOnLoad: false,
+    suppressErrorRendering: true,  // we show our own message instead of Mermaid's error graphic
+    securityLevel: "strict",  // diagram code comes from the model
+    theme: "base",
+    fontFamily: "JetBrains Mono, monospace",
+    fontSize: 13,
+    themeVariables: {
+      primaryColor: "#1A3050", primaryBorderColor: "#00B4A6", primaryTextColor: "#F0F4F8",
+      secondaryColor: "#0D1E35", tertiaryColor: "#0A1628", lineColor: "#00D4C8",
+      textColor: "#F0F4F8", mainBkg: "#1A3050", clusterBkg: "#0D1E35",
+      edgeLabelBackground: "#0E1E3C", nodeBorder: "#00B4A6", titleColor: "#00D4C8"
+    },
+    flowchart: { curve: "basis", padding: 20, useMaxWidth: true },
+    sequence: { useMaxWidth: true, mirrorActors: false }
+  });
+
+  let lastCode = null;
+  window.addEventListener("message", async function (event) {
+    if (!event.data || event.data.type !== "streamlit:render") return;
+    const args = event.data.args || {};
+    if (args.code === lastCode) return;  // reruns re-send args; skip identical redraws
+    lastCode = args.code;
+
+    const title = document.getElementById("title");
+    title.textContent = args.title ? "📊 " + args.title : "";
+    title.hidden = !args.title;
+
+    const target = document.getElementById("diagram");
+    const id = () => "m" + Math.random().toString(36).slice(2, 9);
+    try {
+      let result;
+      try {
+        result = await mermaid.render(id(), args.code || "");
+      } catch (first) {
+        result = await mermaid.render(id(), quoteLabels(args.code || ""));
+      }
+      target.innerHTML = result.svg;
+    } catch (err) {
+      // textContent, never innerHTML: the code and error are untrusted
+      target.innerHTML = '<div class="error"><div></div><pre></pre></div>';
+      target.querySelector(".error div").textContent = "Diagram could not be drawn: " + err.message;
+      target.querySelector(".error pre").textContent = args.code || "";
+    }
+    setHeight();
+  });
+
+  send("streamlit:componentReady", { apiVersion: 1 });
+  window.addEventListener("resize", setHeight);
+</script>
+</body>
+</html>

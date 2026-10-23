@@ -1,7 +1,6 @@
 import sqlite3
-import os
 
-DB_PATH = os.getenv("SQLITE_DB_PATH", "omnischolar.db")
+from config import SQLITE_DB_PATH as DB_PATH
 
 
 def init_db():
@@ -109,6 +108,14 @@ def init_db():
             conn.commit()
         except Exception:
             pass  # column already exists
+    try:
+        c.execute("ALTER TABLE quiz_history ADD COLUMN subject TEXT DEFAULT ''")
+    except Exception:
+        pass  # column already exists
+    for _table in ("quiz_history", "weak_concepts", "study_sessions"):
+        c.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{_table}_student ON {_table}(student_id)"
+        )
     conn.commit()
     conn.close()
 
@@ -141,10 +148,16 @@ def save_student(profile_or_id, name=None, subject=None, exam_date=None,
     c = conn.cursor()
     c.execute(
         """
-        INSERT OR REPLACE INTO students
+        INSERT INTO students
         (student_id, name, subject, exam_date, preferred_language, weak_areas,
          student_type, al_stream, al_subjects)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(student_id) DO UPDATE SET
+            name = excluded.name, subject = excluded.subject,
+            exam_date = excluded.exam_date,
+            preferred_language = excluded.preferred_language,
+            weak_areas = excluded.weak_areas, student_type = excluded.student_type,
+            al_stream = excluded.al_stream, al_subjects = excluded.al_subjects
         """,
         (
             profile["student_id"],
@@ -162,16 +175,27 @@ def save_student(profile_or_id, name=None, subject=None, exam_date=None,
     conn.close()
 
 
-def save_quiz_result(student_id, topic, score, total, misconception=""):
+def save_quiz_result(student_id, topic, score, total, misconception="", subject=""):
+    """Record a quiz attempt and mark today as a study day (drives the streak)."""
+    from datetime import date
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
         """
-        INSERT INTO quiz_history (student_id, topic, score, total, misconception)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO quiz_history (student_id, topic, score, total, misconception, subject)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (student_id, topic, score, total, misconception),
+        (student_id, topic, score, total, misconception, subject),
     )
+    today = date.today().isoformat()
+    if not c.execute(
+        "SELECT 1 FROM study_sessions WHERE student_id = ? AND session_date = ?",
+        (student_id, today),
+    ).fetchone():
+        c.execute(
+            "INSERT INTO study_sessions (student_id, session_date) VALUES (?, ?)",
+            (student_id, today),
+        )
     conn.commit()
     conn.close()
 
@@ -228,10 +252,12 @@ class Database:
 
         # Add missing columns to weak_concepts (legacy schema may lack these)
         for _col, _type in [
+            ("subject",    "TEXT DEFAULT ''"),
             ("topic",      "TEXT DEFAULT ''"),
             ("error_type", "TEXT DEFAULT 'factual_error'"),
             ("frequency",  "INTEGER DEFAULT 1"),
-            ("last_seen",  "DATETIME DEFAULT CURRENT_TIMESTAMP"),
+            # SQLite can't ADD COLUMN with a non-constant default; backfilled below
+            ("last_seen",  "DATETIME"),
         ]:
             try:
                 conn.execute(
@@ -240,6 +266,11 @@ class Database:
                 conn.commit()
             except Exception:
                 pass
+        conn.execute(
+            "UPDATE weak_concepts SET last_seen = COALESCE(created_at, CURRENT_TIMESTAMP) "
+            "WHERE last_seen IS NULL"
+        )
+        conn.commit()
 
         # Add missing columns to past_paper_sessions
         for _col, _type in [
@@ -340,6 +371,7 @@ class Database:
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 student_id  TEXT NOT NULL,
                 concept     TEXT NOT NULL,
+                subject     TEXT DEFAULT '',
                 topic       TEXT NOT NULL DEFAULT '',
                 error_type  TEXT NOT NULL DEFAULT 'factual_error',
                 frequency   INTEGER NOT NULL DEFAULT 1,
@@ -480,8 +512,8 @@ class Database:
                 c.execute(
                     """INSERT INTO weak_concepts
                        (student_id, concept, subject, topic, error_type,
-                        frequency, resolved)
-                       VALUES (?, ?, ?, ?, ?, 1, 0)""",
+                        frequency, resolved, last_seen)
+                       VALUES (?, ?, ?, ?, ?, 1, 0, CURRENT_TIMESTAMP)""",
                     (student_id, concept, subject or topic, topic, error_type),
                 )
             conn.commit()
@@ -587,36 +619,64 @@ class Database:
     def get_weak_concepts(self, student_id: str, resolved: bool = False) -> list:
         conn = self._conn()
         c = conn.cursor()
-        # Defensive: only request columns that exist
-        cols = {row[1] for row in c.execute("PRAGMA table_info(weak_concepts)")}
-        sel = ["id", "concept", "subject", "created_at"]
-        if "topic" in cols:      sel.append("topic")
-        if "frequency" in cols:  sel.append("frequency")
-        if "last_seen" in cols:  sel.append("last_seen")
-        c.execute(
-            f"SELECT {', '.join(sel)} FROM weak_concepts "
-            f"WHERE student_id = ? AND resolved = ?",
-            (student_id, 1 if resolved else 0),
-        )
-        rows = c.fetchall()
-        conn.close()
-        out = []
-        for r in rows:
-            d = {"id": r[0], "concept": r[1], "subject": r[2],
-                 "created_at": r[3]}
-            idx = 4
-            if "topic" in cols:
-                d["topic"] = r[idx] or ""; idx += 1
+        try:
+            if resolved is None:
+                c.execute("""
+                    SELECT id, concept,
+                           COALESCE(subject, '') AS subject,
+                           COALESCE(topic, '')   AS topic,
+                           COALESCE(frequency, 1) AS frequency,
+                           last_seen
+                    FROM weak_concepts
+                    WHERE student_id = ?
+                    ORDER BY last_seen DESC
+                """, (student_id,))
             else:
-                d["topic"] = ""
-            if "frequency" in cols:
-                d["frequency"] = r[idx] or 1; idx += 1
-            else:
-                d["frequency"] = 1
-            if "last_seen" in cols:
-                d["last_seen"] = r[idx]; idx += 1
-            out.append(d)
-        return out
+                c.execute("""
+                    SELECT id, concept,
+                           COALESCE(subject, '') AS subject,
+                           COALESCE(topic, '')   AS topic,
+                           COALESCE(frequency, 1) AS frequency,
+                           last_seen
+                    FROM weak_concepts
+                    WHERE student_id = ? AND resolved = ?
+                    ORDER BY last_seen DESC
+                """, (student_id, 1 if resolved else 0))
+            rows = c.fetchall()
+            conn.close()
+            return [
+                {
+                    "id":        r[0],
+                    "concept":   r[1],
+                    "subject":   r[2],
+                    "topic":     r[3],
+                    "frequency": r[4],
+                    "last_seen": r[5],
+                }
+                for r in rows
+            ]
+        except sqlite3.OperationalError:
+            # subject column missing — run migration then return empty
+            try:
+                conn.execute(
+                    "ALTER TABLE weak_concepts ADD COLUMN subject TEXT DEFAULT ''"
+                )
+                conn.commit()
+            except Exception:
+                pass
+            conn.close()
+            return []
+
+    def resolve_concept(self, concept_id: int) -> None:
+        conn = self._conn()
+        try:
+            conn.execute("UPDATE weak_concepts SET resolved = 1 WHERE id = ?", (concept_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_quiz_history(self, student_id: str) -> list:
+        return get_quiz_history(student_id)
 
     def record_weak_concept(self, student_id: str, concept: str, subject: str = "") -> None:
         conn = self._conn()
@@ -646,6 +706,65 @@ class Database:
         row = c.fetchone()
         conn.close()
         return row[0] if row and row[0] else ""
+
+    def get_student_profile(self, student_id: str):
+        """Return a student profile dict, or None if not found."""
+        import json as _json
+        conn = self._conn()
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT student_id, name, subject, exam_date, preferred_language,
+                   weak_areas, student_type, al_stream, al_subjects
+            FROM students
+            WHERE student_id = ?
+            LIMIT 1
+            """,
+            (student_id,),
+        )
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return None
+
+        al_subjects = row[8] or "[]"
+        if isinstance(al_subjects, str):
+            try:
+                al_subjects = _json.loads(al_subjects)
+            except Exception:
+                al_subjects = []
+        if not isinstance(al_subjects, list):
+            al_subjects = []
+
+        return {
+            "student_id": row[0] or "",
+            "name": row[1] or "",
+            "subject": row[2] or "",
+            "exam_date": row[3] or "",
+            "preferred_language": row[4] or "English",
+            "weak_areas": row[5] or "",
+            "student_type": row[6] or "Undergraduate",
+            "al_stream": row[7] or "",
+            "al_subjects": al_subjects,
+        }
+
+    def get_latest_student_profile(self):
+        """Return the most recently saved student profile, or None."""
+        conn = self._conn()
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT student_id
+            FROM students
+            ORDER BY rowid DESC
+            LIMIT 1
+            """
+        )
+        row = c.fetchone()
+        conn.close()
+        if not row or not row[0]:
+            return None
+        return self.get_student_profile(row[0])
 
     # ── Lessons ───────────────────────────────────────────────────────────────
     def save_lesson(self, student_id: str = "", subject: str = "",
@@ -684,7 +803,7 @@ class Database:
     # ── Analytics ─────────────────────────────────────────────────────────────
     def get_class_analytics(self, subject: str | None = None) -> dict:
         """Return aggregate stats across all students, optionally filtered by subject."""
-        conn = sqlite3.connect(DB_PATH)
+        conn = self._conn()
         c = conn.cursor()
         try:
             c.execute("SELECT COUNT(*) FROM students")

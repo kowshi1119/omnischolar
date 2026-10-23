@@ -10,16 +10,17 @@ import json
 import math
 import os
 from collections import Counter
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 import streamlit as st
+
+from nav import go
 
 from al_config import STREAM_FOLDER_NAMES, SUBJECT_FILE_SLUGS
 from prompt import PAPER_SUMMARIZER_PROMPT, PREDICTION_ENGINE_PROMPT, CURRICULUM_ALIGNMENT_PROMPT
 from ui_components import (
     COLORS,
     render_chapter_bars,
-    render_exam_readiness_hero,
     render_thinking_state,
 )
 
@@ -282,7 +283,7 @@ def _render_paper_library(student: dict, db, llm):
 
             st.dataframe(
                 [{k: v for k, v in r.items() if k != "_id"} for r in rows],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -335,7 +336,7 @@ def _render_summarizer(student: dict, db, llm):
 
     uploaded = st.file_uploader("Upload Paper PDF", type=["pdf"], key="summ_pdf_upload")
 
-    if uploaded and st.button("📊 Generate Summary", use_container_width=True, type="primary"):
+    if uploaded and st.button("📊 Generate Summary", width="stretch", type="primary"):
         with st.spinner("Extracting text from PDF..."):
             try:
                 import fitz  # PyMuPDF
@@ -445,7 +446,7 @@ def _render_prediction_engine(student: dict, db, llm):
                 unsafe_allow_html=True,
             )
 
-    if st.button("🔮 Generate 2027 Prediction", use_container_width=True, type="primary", key="btn_predict"):
+    if st.button("🔮 Generate 2027 Prediction", width="stretch", type="primary", key="btn_predict"):
         freq_table_str = "\n".join(
             f"| {topic} | {count}/10 years |" for topic, count in sorted(freq.items(), key=lambda x: x[1], reverse=True)
         )
@@ -568,7 +569,7 @@ def _render_curriculum_alignment(student: dict, db, llm):
         height=120,
     )
 
-    if topics_input.strip() and st.button("🗂️ Map to NIE Syllabus", use_container_width=True, type="primary"):
+    if topics_input.strip() and st.button("🗂️ Map to NIE Syllabus", width="stretch", type="primary"):
         syllabus_summary = "\n".join(
             f"{ch['unit_id']}: {ch['name']} — subtopics: {', '.join(ch.get('subtopics', []))}"
             for ch in chapters
@@ -604,6 +605,114 @@ def _render_curriculum_alignment(student: dict, db, llm):
 
 # ── Tab 5: 3A Readiness Dashboard ─────────────────────────────────────────────
 
+def _render_readiness_ring(
+    readiness_pct: int,
+    grade: str,
+    confidence_band: str,
+    confidence_note: str,
+    calibration_source: str,
+    weakest_topic: str = None,
+) -> None:
+    """Animated SVG readiness ring with grade prediction."""
+    CIRC = 282.7
+    offset = CIRC * (1 - readiness_pct / 100)
+
+    if readiness_pct >= 75:
+        ring_color = "#39FF14"
+    elif readiness_pct >= 60:
+        ring_color = "#D4A24C"
+    elif readiness_pct >= 40:
+        ring_color = "#FFB830"
+    else:
+        ring_color = "#FF4757"
+
+    grade_color = (
+        "#39FF14" if grade == "A" else
+        "#D4A24C" if grade == "B" else
+        "#FFB830" if grade == "C" else
+        "#FF4757"
+    )
+
+    weakest_html = (
+        f'<div class="omni-chip omni-chip-red" style="margin-top:12px;">'
+        f'⚠️ Weakest: {weakest_topic}</div>'
+        if weakest_topic else ""
+    )
+
+    st.markdown(f"""
+    <div class="omni-card omni-card-gold fade-in"
+         style="text-align:center; padding:28px;">
+
+      <div style="position:relative; display:inline-block; margin-bottom:16px;">
+        <svg width="160" height="160" viewBox="0 0 120 120"
+             style="transform:rotate(-90deg)">
+          <circle cx="60" cy="60" r="45"
+                  fill="none"
+                  stroke="rgba(212,162,76,0.12)"
+                  stroke-width="10"/>
+          <circle cx="60" cy="60" r="45"
+                  fill="none"
+                  stroke="{ring_color}"
+                  stroke-width="10"
+                  stroke-linecap="round"
+                  stroke-dasharray="{CIRC}"
+                  stroke-dashoffset="{offset:.1f}"
+                  style="
+                    transition: stroke-dashoffset 1.5s ease;
+                    filter: drop-shadow(0 0 6px {ring_color}88);"/>
+        </svg>
+        <div style="
+          position:absolute; top:50%; left:50%;
+          transform:translate(-50%,-50%);
+          text-align:center;">
+          <div style="
+            font-family:'JetBrains Mono',monospace;
+            font-size:1.8rem; font-weight:700;
+            color:{ring_color}; line-height:1;">
+            {readiness_pct}%
+          </div>
+          <div style="
+            font-family:'DM Sans',sans-serif;
+            font-size:0.65rem; color:#8899AA;
+            margin-top:2px; letter-spacing:0.08em;">
+            READY
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <div style="
+          font-family:'JetBrains Mono',monospace;
+          font-size:0.58rem; color:#7A8FA3;
+          letter-spacing:0.2em; text-transform:uppercase;
+          margin-bottom:5px;">
+          PREDICTED GRADE
+        </div>
+        <div style="
+          font-family:'Fraunces',serif;
+          font-size:3rem; font-weight:700;
+          color:{grade_color}; line-height:1;
+          filter: drop-shadow(0 0 12px {grade_color}66);">
+          {grade}
+        </div>
+      </div>
+
+      <div class="omni-chip omni-chip-teal" style="margin:0 auto 8px;">
+        {confidence_band}
+      </div>
+
+      <div style="
+        font-family:'JetBrains Mono',monospace;
+        font-size:0.6rem; color:#2A4060;
+        line-height:1.6; margin-top:8px;">
+        {calibration_source}
+      </div>
+
+      {weakest_html}
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def _render_3a_dashboard(student: dict, db, llm):
     st.markdown(
         f"""<div style="background:{COLORS['card']};border-radius:12px;
@@ -622,8 +731,14 @@ def _render_3a_dashboard(student: dict, db, llm):
     al_stream = student.get("al_stream", "A/L")
 
     if not al_subjects:
-        st.warning("No A/L subjects set. Update your profile in the sidebar.")
-        return
+        # Fallback: show readiness for the student's general subject
+        _fallback_subj = student.get("subject", "Computer Science") or "Computer Science"
+        al_subjects = [_fallback_subj]
+        al_stream = "General"
+        st.info(
+            f"Showing readiness for **{_fallback_subj}**. "
+            "Set your A/L Stream and subjects in the sidebar for the full 3A tracking dashboard."
+        )
 
     # Exam countdown
     exam_date_str = student.get("exam_date", "")
@@ -663,11 +778,23 @@ def _render_3a_dashboard(student: dict, db, llm):
         _cb  = _readiness["confidence_band"]
         _cn  = _readiness["confidence_note"]
         _cs  = _readiness["calibration_source"]
+        _wt  = _readiness.get("weakest_topic")
+        _ts  = _readiness.get("topic_scores", {})
         grade_color = (COLORS["primary"] if pred_grade == "A"
                        else COLORS["amber"] if pred_grade in ("B", "C")
                        else "#EF4444")
 
-        with st.expander(f"📘 {subj} — Predicted: {pred_grade}  ({_rp}% ready)", expanded=True):
+        # ── Animated SVG readiness ring ───────────────────────────────────────
+        _render_readiness_ring(
+            readiness_pct=_rp,
+            grade=pred_grade,
+            confidence_band=_cb,
+            confidence_note=_cn,
+            calibration_source=_cs,
+            weakest_topic=_wt,
+        )
+
+        with st.expander(f"📘 {subj} — Chapter Breakdown", expanded=False):
             col_s1, col_s2 = st.columns([3, 1])
             with col_s1:
                 if chapter_scores:
@@ -712,32 +839,52 @@ def _render_3a_dashboard(student: dict, db, llm):
         # Sort: high frequency + low score = highest priority
         sorted_weak = sorted(all_weaknesses, key=lambda x: x[4] * (100 - x[3]), reverse=True)
         for rank, (subj, unit_id, unit_name, score, freq) in enumerate(sorted_weak[:8], start=1):
-            priority_color = COLORS["primary"] if rank <= 3 else COLORS["amber"] if rank <= 6 else COLORS["muted"]
-            st.markdown(
-                f"""<div style="border-left:4px solid {priority_color};
-                                padding:10px 14px;margin:5px 0;
-                                border-radius:0 8px 8px 0;background:{COLORS['section']};">
-                  <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <div>
-                      <span style="color:{priority_color};font-size:0.72rem;font-weight:600">
-                        #{rank} · {subj} · {unit_id}
-                      </span>
-                      <div style="color:#E2E8F0;font-weight:600;font-size:0.9rem">
-                        {unit_name}
-                      </div>
-                    </div>
-                    <div style="text-align:right">
-                      <div style="color:#EF4444;font-size:0.82rem">
-                        Score: {score:.0f}%
-                      </div>
-                      <div style="color:{COLORS['muted']};font-size:0.72rem">
-                        {freq}/10 papers
-                      </div>
-                    </div>
-                  </div>
-                </div>""",
-                unsafe_allow_html=True,
+            priority_color = (
+                "#FF4757" if rank <= 3 else
+                "#FFB830" if rank <= 6 else
+                "#8899AA"
             )
+            st.markdown(f"""
+            <div class="slide-in" style="
+              animation-delay:{(rank-1)*50}ms;
+              border-left: 4px solid {priority_color};
+              border-radius: 0 10px 10px 0;
+              background: rgba(13,27,42,0.7);
+              padding: 12px 16px;
+              margin: 6px 0;
+              display: flex;
+              justify-content: space-between;
+              align-items: center;">
+
+              <div>
+                <div style="
+                  font-family:'JetBrains Mono',monospace;
+                  font-size:0.62rem; color:{priority_color};
+                  font-weight:600; letter-spacing:0.05em;
+                  margin-bottom:3px;">
+                  #{rank} · {subj} · {unit_id}
+                </div>
+                <div style="
+                  font-family:'DM Sans',sans-serif;
+                  font-size:0.92rem; font-weight:600;
+                  color:#F0F4F8;">
+                  {unit_name}
+                </div>
+              </div>
+
+              <div style="text-align:right; flex-shrink:0;">
+                <div class="omni-chip omni-chip-red"
+                     style="font-size:0.68rem; margin-bottom:4px;">
+                  {score:.0f}% ready
+                </div>
+                <div style="
+                  font-family:'JetBrains Mono',monospace;
+                  font-size:0.6rem; color:#7A8FA3;">
+                  {freq}/10 past papers
+                </div>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
     else:
         st.info("No weak areas detected yet. Complete quizzes in TEST_ME mode to populate this dashboard.")
 
@@ -751,44 +898,216 @@ def _render_3a_dashboard(student: dict, db, llm):
 
     # Quick-launch buttons
     st.markdown("---")
-    st.markdown("### Quick Actions")
+    st.markdown("""
+    <div style="
+      font-family:'JetBrains Mono',monospace;
+      font-size:0.62rem; color:#7A8FA3;
+      letter-spacing:0.2em; text-transform:uppercase;
+      margin:20px 0 10px;">
+      QUICK ACTIONS
+    </div>
+    """, unsafe_allow_html=True)
     qcol1, qcol2, qcol3 = st.columns(3)
     with qcol1:
-        if st.button("📝 Start Past Paper Practice", use_container_width=True):
-            st.session_state["mode"] = "PAST_PAPER"
-            st.rerun()
+        if st.button(
+            "📄 Past Paper Practice",
+            width="stretch",
+            help="Practice with real A/L past papers",
+        ):
+            go("PAST_PAPER")
     with qcol2:
-        if st.button("🧪 Take a Quiz", use_container_width=True):
-            st.session_state["mode"] = "TEST_ME"
-            st.rerun()
+        if st.button(
+            "🧪 Take a Quiz",
+            width="stretch",
+            type="primary",
+            help="Build quiz history for better readiness scoring",
+        ):
+            go("TEST_ME")
     with qcol3:
-        if st.button("📅 Update Study Plan", use_container_width=True):
-            st.session_state["mode"] = "STUDY_PLAN"
-            st.rerun()
+        if st.button(
+            "📅 Update Study Plan",
+            width="stretch",
+            help="Regenerate your day-by-day plan",
+        ):
+            go("STUDY_PLAN")
 
 
 # ── Main Entry Point ──────────────────────────────────────────────────────────
 
 def render_3a_achievement_mode(student: dict, db, llm):
     """Main entry point for the 3A Achievement module. A/L students only."""
-    name = student.get("name", "Student")
-    al_stream = student.get("al_stream", "")
+
+    # ── HARD GUARD: A/L students only ────────────────────────────────────────
+    student_type = student.get("student_type", "Undergraduate")
+    if student_type != "A/L Student":
+        st.warning(
+            "⚠️ The 3A Achievement Engine is for A/L students only. "
+            "Update your Student Type in the sidebar profile."
+        )
+        return
+
+    name        = student.get("name", "Student")
+    al_stream   = student.get("al_stream", "")
     al_subjects = student.get("al_subjects") or []
 
-    st.markdown(
-        f"""<div style="background:linear-gradient(135deg,#0A1628,#1A0A2E);
-                        border-radius:14px;padding:20px 24px;margin-bottom:20px;
-                        border:1px solid {COLORS['amber']}40;">
-          <h2 style="color:{COLORS['amber']};margin:0;font-family:Orbitron,sans-serif">
-            🏆 3A Achievement Module
+    # ── GUARD: require at least 3 quizzes ────────────────────────────────────
+    _qh = []
+    try:
+        _qh = db.get_quiz_history(student.get("student_id", "")) or []
+    except Exception:
+        pass
+
+    if len(_qh) < 3:
+        completed = len(_qh)
+        st.markdown(f"""
+        <div class="omni-card omni-card-gold fade-in"
+             style="text-align:center; padding:56px 32px;
+                    max-width:520px; margin:40px auto;">
+
+          <div style="font-size:4rem; margin-bottom:16px;
+                      animation: omni-breathe 2s ease infinite;">
+            🏆
+          </div>
+
+          <h2 style="
+            font-family: 'Fraunces', serif;
+            color: #D4A24C;
+            font-size: 1.8rem;
+            margin: 0 0 8px;
+            letter-spacing: -0.02em;">
+            3A Achievement Engine
           </h2>
-          <p style="color:{COLORS['muted']};margin:6px 0 0">
-            {name} · {al_stream} · Targets: <strong style="color:{COLORS['primary']}">
-            {' + '.join(al_subjects) or 'No subjects set'}</strong>
+
+          <p style="
+            color: #8899AA;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 0.92rem;
+            max-width: 380px;
+            margin: 0 auto 20px;
+            line-height: 1.6;">
+            Complete at least 3 quizzes in Test Me mode
+            to unlock your personalised Elo IRT readiness
+            score — calibrated against Sri Lanka DoE
+            2022/2023 grade distributions.
           </p>
-        </div>""",
-        unsafe_allow_html=True,
-    )
+
+          <div style="
+            background: rgba(212,162,76,0.08);
+            border: 1px solid rgba(212,162,76,0.2);
+            border-radius: 20px;
+            padding: 8px 20px;
+            display: inline-block;
+            margin-bottom: 20px;">
+            <span style="
+              font-family: 'JetBrains Mono', monospace;
+              font-size: 0.78rem;
+              color: #D4A24C;">
+              {completed}/3 quizzes completed
+            </span>
+          </div>
+
+          <div style="
+            text-align: left;
+            background: rgba(0,0,0,0.2);
+            border-radius: 10px;
+            padding: 16px 20px;
+            margin: 0 auto 24px;
+            max-width: 360px;">
+            <div style="
+              font-family: 'JetBrains Mono', monospace;
+              font-size: 0.58rem;
+              color: #7A8FA3;
+              letter-spacing: 0.2em;
+              text-transform: uppercase;
+              margin-bottom: 10px;">
+              YOU WILL UNLOCK:
+            </div>
+            {"".join([
+              f'<div style="display:flex;gap:8px;margin:6px 0;align-items:center;">'
+              f'<span style="color:#D4A24C;">&#10003;</span>'
+              f'<span style="color:#8899AA;font-size:0.82rem;'
+              f'font-family:\'DM Sans\',sans-serif;">{item}</span></div>'
+              for item in [
+                "Elo IRT readiness score",
+                "DoE grade calibration (A/B/C/S/F prediction)",
+                "Subject-by-subject breakdown",
+                "Priority fix list (by past-paper frequency)",
+                "2027 exam topic prediction engine",
+              ]
+            ])}
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col_cta = st.columns([1, 2, 1])[1]
+        with col_cta:
+            if st.button(
+                "📝 Start Quiz in Test Me →",
+                type="primary",
+                width="stretch",
+            ):
+                go("TEST_ME")
+        return
+
+    # ── MODULE HEADER ─────────────────────────────────────────────────────────
+    subjects_display = " + ".join(al_subjects) if al_subjects else "No subjects set"
+    st.markdown(f"""
+    <div class="omni-card omni-card-gold fade-in"
+         style="padding: 22px 28px; margin-bottom: 20px;">
+      <div style="display:flex; justify-content:space-between;
+                  align-items:flex-start; gap:16px;">
+
+        <div>
+          <div class="omni-chip omni-chip-gold"
+               style="margin-bottom:10px;">
+            🏆 A/L PREPARATION ENGINE
+          </div>
+          <h1 style="
+            font-family: 'Fraunces', serif;
+            color: #D4A24C;
+            margin: 0 0 6px;
+            font-size: 1.9rem;
+            letter-spacing: -0.02em;
+            line-height: 1.2;">
+            3A Achievement
+          </h1>
+          <p style="
+            color: #8899AA;
+            margin: 0;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 0.88rem;">
+            {name} · {al_stream}
+          </p>
+        </div>
+
+        <div style="text-align: right; flex-shrink: 0;">
+          <div style="
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.58rem;
+            color: #7A8FA3;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            margin-bottom: 6px;">
+            TARGETING
+          </div>
+          <div style="
+            color: #D4A24C;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 0.95rem;
+            font-weight: 600;">
+            {subjects_display}
+          </div>
+          <div style="
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            color: #7A8FA3;
+            margin-top: 4px;">
+            Goal: 3A passes
+          </div>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📚 Paper Library",

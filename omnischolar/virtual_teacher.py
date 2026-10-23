@@ -13,21 +13,21 @@ Dr. Omni delivers lessons with:
   - Related topic suggestions
 """
 
+import concurrent.futures
+import os
 import json
 import re
 import time
-import uuid
 
 import streamlit as st
 import streamlit.components.v1 as components
 
 from prompt import (
-    VIRTUAL_TEACHER_PROMPT,
     VIRTUAL_TEACHER_EVAL_PROMPT,
     VIRTUAL_TEACHER_SOCRATIC_FOLLOWUP,
     VIRTUAL_TEACHER_RECAP_PROMPT,
 )
-from rag import retrieve_context, retrieve_context_hybrid
+from rag import retrieve_context_hybrid
 
 
 # ── Lesson memory across topics in session ────────────────────────────────────
@@ -45,6 +45,285 @@ def _add_to_memory(topic: str, key_points: list):
         memory.pop(0)
 
 
+# ── Lesson validation ─────────────────────────────────────────────────────────
+
+def _validate_lesson(lesson: dict) -> tuple[bool, str]:
+    """
+    Validate a generated lesson dict.
+    Returns (is_valid: bool, reason: str).
+    """
+    if not isinstance(lesson, dict):
+        return False, "lesson is not a dict"
+
+    checks = [
+        ("hook",            str,  20, "hook too short"),
+        ("explanation",     str,  50, "explanation too short"),
+        ("worked_example",  str,  30, "worked_example too short"),
+        ("exam_hook",       list,  1, "exam_hook has no items"),
+        ("check_questions", list,  1, "check_questions has no items"),
+    ]
+
+    for key, typ, min_val, reason in checks:
+        val = lesson.get(key)
+        if val is None:
+            return False, f"missing key: {key}"
+        if typ == str:
+            if not isinstance(val, str) or len(val.strip()) < min_val:
+                return False, reason
+        elif typ == list:
+            if not isinstance(val, list) or len(val) < min_val:
+                return False, reason
+
+    return True, "ok"
+
+
+VALID_MERMAID_STARTS = (
+    "flowchart", "graph", "sequenceDiagram",
+    "stateDiagram", "classDiagram", "erDiagram",
+    "gantt", "pie", "gitGraph", "mindmap", "timeline",
+)
+
+
+def _should_use_llm_diagram(diagram: str) -> bool:
+    """
+    Return True only if the LLM-generated diagram is usable Mermaid.
+    Falls back to _make_topic_diagram() when False.
+    """
+    if not diagram or len(diagram.strip()) < 50:
+        return False
+    stripped = diagram.strip()
+    starts_valid = any(stripped.lower().startswith(k) for k in VALID_MERMAID_STARTS)
+    has_artifact = "{topic}" in diagram or "{name}" in diagram
+    return starts_valid and not has_artifact
+
+
+def _make_topic_diagram(topic: str) -> str:
+    """Return a topic-aware Mermaid fallback diagram with technical labels."""
+    t = (topic or "").lower()
+
+    if "deadlock" in t:
+        return """flowchart TD
+    P1[Process P1] -->|holds| R1[Resource A]
+    P1 -->|waiting for| R2[Resource B]
+    P2[Process P2] -->|holds| R2[Resource B]
+    P2 -->|waiting for| R1[Resource A]
+    style P1 fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
+    style P2 fill:#1A2540,stroke:#FFB800,color:#E8F0FF
+    style R1 fill:#0D1B35,stroke:#EF4444,color:#E8F0FF
+    style R2 fill:#0D1B35,stroke:#EF4444,color:#E8F0FF"""
+
+    if "binary search tree" in t or "bst" in t:
+        return """graph TD
+    A50[50] --> A30[30]
+    A50 --> A70[70]
+    A30 --> A20[20]
+    A30 --> A40[40]
+    A70 --> A60[60]
+    A70 --> A80[80]
+    style A50 fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
+    style A30 fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
+    style A70 fill:#1A2540,stroke:#00D4FF,color:#E8F0FF"""
+
+    if "bubble sort" in t or "merge sort" in t or "quick sort" in t or "sort" in t:
+        return """flowchart TD
+    A[Start: Unsorted Array] --> B[Compare Adjacent Elements]
+    B --> C{arr[i] > arr[i+1]?}
+    C -->|Yes| D[Swap Elements]
+    C -->|No| E[Move to Next Pair]
+    D --> E
+    E --> F{End of Pass?}
+    F -->|No| B
+    F -->|Yes| G{Array Sorted?}
+    G -->|No| B
+    G -->|Yes| H[End: Sorted Array]
+    style A fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
+    style H fill:#0D1B35,stroke:#00C850,color:#E8F0FF
+    style C fill:#0D1B35,stroke:#FFB800,color:#E8F0FF"""
+
+    if "binary search" in t:
+        return """flowchart TD
+    A[Sorted Array + Target] --> B[low=0, high=n-1]
+    B --> C{low <= high?}
+    C -->|No| G[Return -1 Not Found]
+    C -->|Yes| D[mid = (low + high) // 2]
+    D --> E{arr[mid] == target?}
+    E -->|Yes| F[Return mid FOUND]
+    E -->|arr[mid] < target| H[low = mid + 1]
+    E -->|arr[mid] > target| I[high = mid - 1]
+    H --> C
+    I --> C
+    style A fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
+    style F fill:#0D1B35,stroke:#00C850,color:#E8F0FF
+    style G fill:#0D1B35,stroke:#EF4444,color:#E8F0FF"""
+
+    if "oop" in t or "inherit" in t or "polymorphism" in t or "encapsulation" in t or "class" in t:
+        return """classDiagram
+    Animal <|-- Dog
+    Animal <|-- Cat
+    Animal : +String name
+    Animal : +int age
+    Animal : +makeSound()
+    Animal : +move()
+    Dog : +String breed
+    Dog : +fetch()
+    Dog : +makeSound() Woof
+    Cat : +String color
+    Cat : +purr()
+    Cat : +makeSound() Meow"""
+
+    if "linked list" in t:
+        return """flowchart LR
+    H[Head] --> N1[Data:10 Next]
+    N1 --> N2[Data:20 Next]
+    N2 --> N3[Data:30 Next]
+    N3 --> T[NULL]
+    style H fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
+    style N1 fill:#1A2540,stroke:#FFB800,color:#E8F0FF
+    style N2 fill:#1A2540,stroke:#FFB800,color:#E8F0FF
+    style N3 fill:#1A2540,stroke:#FFB800,color:#E8F0FF
+    style T fill:#0D1B35,stroke:#EF4444,color:#E8F0FF"""
+
+    if "stack" in t:
+        return """flowchart TD
+    TOP[TOP: 30 most recent] --> N2[20]
+    N2 --> BOTTOM[BOTTOM: 10 first pushed]
+    PUSH[push 40] -->|goes to TOP| TOP
+    TOP -->|pop removes| POP[pop returns 30]
+    style TOP fill:#1A2540,stroke:#00C850,color:#E8F0FF
+    style BOTTOM fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
+    style PUSH fill:#0D1B35,stroke:#FFB800,color:#E8F0FF"""
+
+    if "queue" in t:
+        return """flowchart LR
+    EN[enqueue adds here] --> REAR[REAR: 30]
+    REAR --> N2[20]
+    N2 --> FRONT[FRONT: 10]
+    FRONT --> DE[dequeue removes here]
+    style REAR fill:#1A2540,stroke:#FFB800,color:#E8F0FF
+    style FRONT fill:#1A2540,stroke:#00C850,color:#E8F0FF
+    style EN fill:#0D1B35,stroke:#00D4FF,color:#E8F0FF"""
+
+    if "process state" in t or "process lifecycle" in t:
+        return """stateDiagram-v2
+    [*] --> New: fork()
+    New --> Ready: admitted
+    Ready --> Running: scheduler dispatch
+    Running --> Ready: time quantum expired
+    Running --> Blocked: I/O request
+    Blocked --> Ready: I/O complete
+    Running --> Terminated: exit()
+    Terminated --> [*]"""
+
+    if "tcp" in t or "handshake" in t or "network" in t:
+        return """sequenceDiagram
+    participant C as Client
+    participant S as Server
+    C->>S: SYN (seq=x)
+    S->>C: SYN-ACK (seq=y, ack=x+1)
+    C->>S: ACK (ack=y+1)
+    Note over C,S: Connection Established
+    C->>S: Data Transfer
+    S->>C: ACK"""
+
+    if "recursion" in t or "recursive" in t:
+        return """flowchart TD
+    A[factorial 5: n=5] -->|calls| B[factorial 4: n=4]
+    B -->|calls| C[factorial 3: n=3]
+    C -->|calls| D[factorial 2: n=2]
+    D -->|calls| E[factorial 1: n=1 BASE CASE]
+    E -->|returns 1| D
+    D -->|returns 2| C
+    C -->|returns 6| B
+    B -->|returns 24| A
+    A -->|returns 120| F[Result: 120]
+    style A fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
+    style E fill:#0D1B35,stroke:#00C850,color:#E8F0FF
+    style F fill:#0D1B35,stroke:#FFB800,color:#E8F0FF"""
+
+    if t == "os" or "operating system" in t:
+        return """stateDiagram-v2
+    [*] --> New: fork()
+    New --> Ready: admitted
+    Ready --> Running: scheduler dispatch
+    Running --> Ready: time quantum expired
+    Running --> Blocked: I/O request
+    Blocked --> Ready: I/O complete
+    Running --> Terminated: exit()
+    Terminated --> [*]"""
+
+    if "hash" in t or "hashing" in t:
+        return """flowchart TD
+    K1[Key: apple] -->|hash mod 7| B0[Bucket 0]
+    K2[Key: banana] -->|hash mod 7| B2[Bucket 2]
+    K3[Key: cherry] -->|hash mod 7| B2
+    B2 -->|chaining| C1[banana]
+    C1 --> C2[cherry: collision]
+    K4[Key: date] -->|hash mod 7| B5[Bucket 5]
+    style K1 fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
+    style B2 fill:#0D1B35,stroke:#FFB800,color:#E8F0FF
+    style C2 fill:#0D1B35,stroke:#EF4444,color:#E8F0FF"""
+
+    if t == "graph" or ("graph" in t and "bst" not in t and "binary" not in t):
+        return """flowchart LR
+    A((A)) -->|edge| B((B))
+    A -->|edge| C((C))
+    B -->|edge| D((D))
+    C -->|edge| D
+    D -->|edge| E((E))
+    style A fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
+    style E fill:#0D1B35,stroke:#00C850,color:#E8F0FF"""
+
+    if t == "tree" or ("tree" in t and "bst" not in t and "binary search" not in t):
+        return """flowchart TD
+    Root[Root] --> L1A[Child A]
+    Root --> L1B[Child B]
+    Root --> L1C[Child C]
+    L1A --> L2A[Leaf 1]
+    L1A --> L2B[Leaf 2]
+    L1B --> L2C[Leaf 3]
+    L1C --> L2D[Leaf 4]
+    style Root fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
+    style L2A fill:#0D1B35,stroke:#00C850,color:#E8F0FF"""
+
+    if "pointer" in t or "memory address" in t:
+        return """flowchart LR
+    V[int x = 42 at 0x1000] -->|address stored in| P[int* p = 0x1000]
+    P -->|dereference *p| V
+    V2[int y = 99 at 0x1008]
+    P2[int* q = 0x1008] -->|dereference *q| V2
+    style V fill:#1A2540,stroke:#00D4FF,color:#E8F0FF
+    style P fill:#0D1B35,stroke:#FFB800,color:#E8F0FF
+    style P2 fill:#0D1B35,stroke:#FFB800,color:#E8F0FF"""
+
+    if "recursion" in t or "recursive" in t:
+        return """flowchart TD
+    A[factorial_5 n=5] --> B[factorial_4 n=4]
+    B --> C[factorial_3 n=3]
+    C --> D[factorial_2 n=2]
+    D --> E[factorial_1 n=1 BASE CASE returns 1]
+    E --> D2[returns 1×1=1]
+    D2 --> C2[returns 2×1=2]
+    C2 --> B2[returns 3×2=6]
+    B2 --> A2[returns 4×6=24]
+    A2 --> Result[factorial_5 returns 120]
+    style A fill:#1A2540,stroke:#00B4A6,color:#E8F0FF
+    style E fill:#0D1B35,stroke:#39FF14,color:#E8F0FF
+    style Result fill:#0D1B35,stroke:#D4A24C,color:#E8F0FF"""
+
+    return (
+        f"flowchart TD\n"
+        f"    A[{topic[:35]}] --> B[Core Definition]\n"
+        f"    A --> C[Key Operations]\n"
+        f"    A --> D[Complexity]\n"
+        f"    B --> E[Example Use Case]\n"
+        f"    C --> E\n"
+        f"    style A fill:#1A2540,stroke:#00D4FF,color:#E8F0FF\n"
+        f"    style E fill:#0D1B35,stroke:#00C850,color:#E8F0FF\n"
+        f"    style B fill:#0D1B35,stroke:#FFB800,color:#E8F0FF\n"
+        f"    style C fill:#0D1B35,stroke:#FFB800,color:#E8F0FF\n"
+    )
+
+
 # ── VirtualTeacher class ──────────────────────────────────────────────────────
 
 class VirtualTeacher:
@@ -55,50 +334,78 @@ class VirtualTeacher:
     # ── Core lesson generation ────────────────────────────────────────────────
 
     def teach(self, topic: str, subject: str, student_id: str,
-              language: str) -> dict:
-        """Single call returns lesson + diagram spec + mid-question together."""
+              language: str, simple_prompt: bool = False) -> dict:
+        """Single call returns lesson + diagram spec + mid-question together.
+        
+        simple_prompt=True uses a reduced prompt for slow hardware / complex topics.
+        """
         try:
             rag_context, sources = retrieve_context_hybrid(topic, subject, n_results=3)
         except Exception:
             rag_context, sources = "", []
 
-        # ONE COMBINED PROMPT — returns all components in one model call
-        combined_prompt = (
-            "You are Dr. Omni teaching {topic} in {subject}.\n"
-            "Student language: {language}\n\n"
-            "Study materials:\n"
-            "{rag_context}\n\n"
-            "Return ONLY this JSON (no text outside it):\n"
-            "{{\n"
-            "  \"hook\": \"2-3 sentences. Real-world analogy from Sri Lankan daily life. In {language}.\",\n"
-            "  \"explanation\": \"150 words max. Definition \u2192 mechanism \u2192 complexity (if CS) \u2192 Sri Lankan example \u2192 exam trap. In {language}.\",\n"
-            "  \"worked_example\": \"Step-by-step trace with ACTUAL VALUES, not placeholders. Every step annotated. In {language}.\",\n"
-            "  \"exam_hook\": [\n"
-            "    \"Examiner Q1: Define/State \u2014 In {language}.\",\n"
-            "    \"Examiner Q2: Compare/Distinguish \u2014 In {language}.\",\n"
-            "    \"Examiner Q3: Apply/Trace \u2014 In {language}.\"\n"
-            "  ],\n"
-            "  \"check_questions\": [\n"
-            "    {{\"question\": \"Recall question in {language}.\", \"expected_key_points\": \"2-3 specific technical points\"}},\n"
-            "    {{\"question\": \"Application scenario question in {language}.\", \"expected_key_points\": \"specific steps expected\"}}\n"
-            "  ],\n"
-            "  \"diagram_spec\": {{\n"
-            "    \"type\": \"flowchart TD or classDiagram or sequenceDiagram or stateDiagram-v2\",\n"
-            "    \"mermaid_code\": \"Complete valid Mermaid code. Dark theme. Named nodes not generic labels.\",\n"
-            "    \"title\": \"Visual: {topic}\"\n"
-            "  }},\n"
-            "  \"mid_question\": {{\n"
-            "    \"question\": \"Quick check \u2014 one probe question testing core mechanism. In {language}.\",\n"
-            "    \"expected\": \"2-3 specific points the answer must contain\",\n"
-            "    \"hint\": \"One directional hint without giving the answer. In {language}.\"\n"
-            "  }}\n"
-            "}}"
-        ).format(
-            topic=topic,
-            subject=subject,
-            language=language,
-            rag_context=rag_context or "No materials uploaded \u2014 use curriculum knowledge.",
-        )
+        if simple_prompt:
+            # Bug 5: simplified prompt — fewer fields, lower token load
+            combined_prompt = (
+                "You are Dr. Omni teaching {topic} in {subject}.\n"
+                "Student language: {language}\n\n"
+                "Return ONLY this JSON (no text outside it):\n"
+                "{{\n"
+                "  \"hook\": \"1-2 sentences introducing {topic}. In {language}.\",\n"
+                "  \"explanation\": \"2 paragraphs explaining {topic}. In {language}.\",\n"
+                "  \"worked_example\": \"1 worked example with actual values. In {language}.\",\n"
+                "  \"exam_hook\": [\n"
+                "    \"Exam question 1 about {topic}.\",\n"
+                "    \"Exam question 2 about {topic}.\"\n"
+                "  ],\n"
+                "  \"check_questions\": [\n"
+                "    {{\"question\": \"What is {topic}?\", \"expected_key_points\": \"core definition\"}}\n"
+                "  ],\n"
+                "  \"diagram_spec\": {{\"mermaid_code\": \"\", \"type\": \"\", \"title\": \"\"}},\n"
+                "  \"mid_question\": {{\n"
+                "    \"question\": \"Explain {topic} in your own words.\",\n"
+                "    \"expected\": \"basic definition and one example\",\n"
+                "    \"hint\": \"Focus on the core concept first.\"\n"
+                "  }}\n"
+                "}}"
+            ).format(topic=topic, subject=subject, language=language)
+        else:
+            combined_prompt = (
+                "You are Dr. Omni teaching {topic} in {subject}.\n"
+                "Student language: {language}\n\n"
+                "Study materials:\n"
+                "{rag_context}\n\n"
+                "Return ONLY this JSON (no text outside it):\n"
+                "{{\n"
+                "  \"hook\": \"2-3 sentences. Real-world analogy from Sri Lankan daily life. In {language}.\",\n"
+                "  \"explanation\": \"150 words max. Definition \u2192 mechanism \u2192 complexity (if CS) \u2192 Sri Lankan example \u2192 exam trap. In {language}.\",\n"
+                "  \"worked_example\": \"Step-by-step trace with ACTUAL VALUES, not placeholders. Every step annotated. In {language}.\",\n"
+                "  \"exam_hook\": [\n"
+                "    \"Examiner Q1: Define/State \u2014 In {language}.\",\n"
+                "    \"Examiner Q2: Compare/Distinguish \u2014 In {language}.\",\n"
+                "    \"Examiner Q3: Apply/Trace \u2014 In {language}.\"\n"
+                "  ],\n"
+                "  \"check_questions\": [\n"
+                "    {{\"question\": \"Recall question in {language}.\", \"expected_key_points\": \"2-3 specific technical points\"}},\n"
+                "    {{\"question\": \"Application scenario question in {language}.\", \"expected_key_points\": \"specific steps expected\"}}\n"
+                "  ],\n"
+                "  \"diagram_spec\": {{\n"
+                "    \"type\": \"flowchart TD or classDiagram or sequenceDiagram or stateDiagram-v2\",\n"
+                "    \"mermaid_code\": \"REQUIRED: Real Mermaid diagram. Use ACTUAL technical terms for {topic}.\",\n"
+                "    \"title\": \"Visual: {topic}\"\n"
+                "  }},\n"
+                "  \"mid_question\": {{\n"
+                "    \"question\": \"Quick check \u2014 one probe question testing core mechanism. In {language}.\",\n"
+                "    \"expected\": \"2-3 specific points the answer must contain\",\n"
+                "    \"hint\": \"One directional hint without giving the answer. In {language}.\"\n"
+                "  }}\n"
+                "}}"
+            ).format(
+                topic=topic,
+                subject=subject,
+                language=language,
+                rag_context=rag_context or "No materials uploaded \u2014 use curriculum knowledge.",
+            )
 
         try:
             from telemetry import timed as _timed
@@ -107,8 +414,11 @@ class VirtualTeacher:
             from contextlib import nullcontext
             _ctx = nullcontext()
 
+        raw = None
+        _timed_out = False
         try:
             with _ctx:
+                # The client's HTTP timeout (OLLAMA_TIMEOUT) bounds this call
                 raw = self.client.chat(
                     messages=[{"role": "user", "content": combined_prompt}],
                     system_prompt="",
@@ -116,31 +426,14 @@ class VirtualTeacher:
                     num_ctx=3072,
                     num_predict=1024,
                 )
-        except Exception as exc:
-            raw = json.dumps({
-                "hook": f"Let's explore {topic} together.",
-                "explanation": f"Could not reach model: {exc}",
-                "worked_example": "Not available.",
-                "exam_hook": [
-                    f"Define {topic}",
-                    f"Explain the key principles of {topic}",
-                    f"Give an example of {topic}",
-                ],
-                "check_questions": [
-                    {"question": f"What is {topic}?",
-                     "expected_key_points": "basic understanding"},
-                ],
-                "diagram_spec": {
-                    "mermaid_code": f"flowchart TD\n    A[{topic}] --> B[Key Concept]\n    style A fill:#1A2540,stroke:#00D4FF,color:#E8F0FF",
-                    "type": "flowchart TD",
-                    "title": f"Visual: {topic}",
-                },
-                "mid_question": {
-                    "question": f"Quick check \u2014 what is {topic} in one sentence?",
-                    "expected": "basic definition",
-                    "hint": f"Focus on what {topic} does and why it matters.",
-                },
-            })
+                if raw.startswith("[OmniScholar]"):
+                    _timed_out, raw = True, None
+        except Exception:
+            raw = None
+
+        if _timed_out or raw is None:
+            # Return a sentinel so the UI can detect the timeout
+            return {"_timeout": True, "_topic": topic, "_subject": subject, "_language": language}
 
         lesson = self._parse_lesson(raw, topic)
         lesson["_sources"] = sources
@@ -148,8 +441,20 @@ class VirtualTeacher:
         lesson["_subject"] = subject
         lesson["_language"] = language
 
-        # Extract diagram and mid-question from combined response
-        lesson["_diagram"] = lesson.pop("diagram_spec", {}).get("mermaid_code", "")
+        # Bug 3: validate diagram from LLM before using it
+        _valid_mermaid_starts = (
+            "flowchart", "graph", "sequenceDiagram", "stateDiagram",
+            "classDiagram", "erDiagram", "gantt", "pie", "gitGraph",
+        )
+        diagram_spec = lesson.pop("diagram_spec", {})
+        mermaid_code = diagram_spec.get("mermaid_code", "").strip() if diagram_spec else ""
+        _use_llm_diagram = (
+            len(mermaid_code) > 50
+            and any(mermaid_code.startswith(kw) for kw in _valid_mermaid_starts)
+            and "{topic}" not in mermaid_code
+            and "{" not in mermaid_code.split("\n")[0]  # no f-string artifacts in first line
+        )
+        lesson["_diagram"] = mermaid_code if _use_llm_diagram else _make_topic_diagram(topic)
         lesson["_mid_question"] = lesson.pop("mid_question", {})
 
         return lesson
@@ -168,8 +473,8 @@ class VirtualTeacher:
                 message=prompt,
                 system="Return only valid JSON. No markdown.",
                 max_tokens=200,
+                format="json",  # Ollama guarantees parseable JSON
             )
-            raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
             return json.loads(raw)
         except Exception:
             return {
@@ -190,8 +495,8 @@ class VirtualTeacher:
                 message=prompt,
                 system="Return only valid JSON. No markdown.",
                 max_tokens=600,
+                format="json",  # Ollama guarantees parseable JSON
             )
-            raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
             return json.loads(raw)
         except Exception:
             return {
@@ -298,32 +603,123 @@ class VirtualTeacher:
         else:
             return f"Continue practicing {topic} — you're in the learning zone"
 
+    def _generate_mid_question_fast(
+        self,
+        topic: str,
+        subject: str,
+        language: str,
+    ) -> dict:
+        """Fast mid-lesson check question using the quick model. Runs in parallel with teach()."""
+        prompt = (
+            f"Generate ONE mid-lesson check question about "
+            f"'{topic}' for a {subject} student studying in "
+            f"{language}. The question should test the CORE concept, "
+            f"not trivial details.\n\n"
+            f"Respond ONLY with valid JSON, no markdown:\n"
+            f'{{"question": "...", '
+            f'"expected_key_points": "...key points the answer must cover...", '
+            f'"difficulty": "medium"}}'
+        )
+        result = self.client.fast_chat(
+            message=prompt,
+            system=(
+                "You are an exam question generator. "
+                "Return ONLY valid JSON. No preamble. "
+                "No markdown. No backticks."
+            ),
+            max_tokens=256,
+        )
+        try:
+            clean = re.sub(r'```json|```|\n', '', result).strip()
+            match = re.search(r'\{.*\}', clean, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+            return json.loads(clean)
+        except Exception:
+            return {
+                "question": (
+                    f"In your own words, explain the core concept "
+                    f"of {topic} and give one real-world example."
+                ),
+                "expected_key_points": (
+                    f"Should cover: definition of {topic}, "
+                    f"key mechanism, practical application"
+                ),
+                "difficulty": "medium",
+            }
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _parse_lesson(self, raw: str, topic: str) -> dict:
+        """Parse lesson JSON from model response. Handles all fence variants."""
+        if not raw or not raw.strip():
+            return self._fallback_lesson(topic, "empty response")
+
+        # Strip ALL markdown fence variants before parsing
+        text = raw.strip()
+        for fence in ["```json", "```JSON", "```", "~~~json", "~~~"]:
+            if text.startswith(fence):
+                text = text[len(fence):].strip()
+                break
+        for fence in ["```", "~~~"]:
+            if text.endswith(fence):
+                text = text[:-len(fence)].strip()
+                break
+
+        # Try direct JSON parse
         try:
-            return json.loads(raw)
+            result = json.loads(text)
+            if isinstance(result, dict) and "explanation" in result:
+                return result
         except Exception:
             pass
-        m = re.search(r'\{.*\}', raw, re.DOTALL)
-        if m:
+
+        # Try finding outermost { ... } object
+        brace_start = text.find("{")
+        brace_end   = text.rfind("}")
+        if brace_start != -1 and brace_end != -1 and brace_end > brace_start:
             try:
-                return json.loads(m.group())
+                result = json.loads(text[brace_start:brace_end + 1])
+                if isinstance(result, dict):
+                    return result
             except Exception:
                 pass
+
+        # All parsing failed — model returned plain text (not JSON)
+        # Build a structured lesson from the plain text; NEVER put raw JSON in explanation
+        return self._fallback_lesson(topic, plain_text=text[:600])
+
+    def _fallback_lesson(self, topic: str, error=None, plain_text: str = "") -> dict:
+        """Safe fallback lesson when JSON parsing fails."""
+        explanation = plain_text if plain_text else (
+            f"The model could not generate a structured lesson for {topic}. "
+            f"Try asking: 'Explain {topic} in simple terms.'"
+        )
         return {
-            "hook": f"Let's explore {topic}.",
-            "explanation": raw,
-            "worked_example": "See explanation above.",
-            "exam_hook": [f"Define {topic}",
-                          f"Explain {topic} with example",
-                          f"Common mistakes about {topic}"],
+            "hook": f"Let's explore {topic} together.",
+            "explanation": explanation,
+            "worked_example": f"Try asking: 'Give me a step-by-step example of {topic}'",
+            "exam_hook": [
+                f"Define {topic} and state its key properties.",
+                f"Compare {topic} with a related concept.",
+                f"Give a practical example of {topic} in action.",
+            ],
             "check_questions": [
                 {"question": f"In your own words, what is {topic}?",
-                 "expected_key_points": "basic understanding"},
+                 "expected_key_points": "basic definition and purpose"},
                 {"question": f"Give one real-world example of {topic}.",
-                 "expected_key_points": "concrete accurate example"},
+                 "expected_key_points": "concrete, accurate example"},
             ],
+            "diagram_spec": {
+                "mermaid_code": _make_topic_diagram(topic),
+                "type": "flowchart TD",
+                "title": f"Visual: {topic}",
+            },
+            "mid_question": {
+                "question": f"Quick check — can you explain {topic} in one sentence?",
+                "expected": "basic definition in own words",
+                "hint": f"Think about what {topic} does and why it exists.",
+            },
         }
 
 
@@ -498,7 +894,7 @@ def render_avatar_teacher(text: str = "", phase: str = "greeting",
         f'<ellipse cx="62" cy="38" rx="6" ry="4" fill="{cheek_c}" opacity="0.35"/>'
     ) if cheek_c not in ("transparent", "") else ""
 
-    components.html(f"""
+    st.iframe(f"""
     <style>
       @keyframes float_{uid} {{
         0%,100% {{ transform: translateY(0px); }}
@@ -731,147 +1127,23 @@ def render_avatar_teacher(text: str = "", phase: str = "greeting",
 
 # ── Mermaid diagram renderer ─────────────────────────────────────────────────
 
+_MERMAID_COMPONENT = components.declare_component(
+    "omni_mermaid",
+    path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "components", "mermaid"),
+)
+
+
 def render_mermaid_diagram(mermaid_code: str, title: str = "") -> None:
-        """
-        Premium Mermaid diagram with:
-        - Mermaid v11 'neo' look (automatic shadows, modern rounding)
-        - Dark navy theme matching OmniScholar brand
-        - CSS 3D depth effect via layered drop-shadow
-        - Fade-in animation on load
-        """
-        if not mermaid_code or not mermaid_code.strip():
-                return
+    """Render a Mermaid diagram offline via the vendored component in components/mermaid."""
+    if not mermaid_code or not mermaid_code.strip():
+        return
 
-        code = mermaid_code.strip()
-        for fence in ["```mermaid", "```", "~~~"]:
-                code = code.replace(fence, "").strip()
+    code = mermaid_code.strip()
+    for fence in ["```mermaid", "```", "~~~"]:
+        code = code.replace(fence, "").strip()
 
-        escaped = (
-                code
-                .replace("\\", "\\\\")
-                .replace("`", "\\`")
-                .replace("$", "\\$")
-        )
+    _MERMAID_COMPONENT(code=code, title=title, default=None)
 
-        title_html = f'<div class="diagram-title">📊 {title}</div>' if title else ""
-
-        components.html(f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <style>
-            body {{ background: transparent; margin: 0; padding: 0; }}
-            .diagram-wrapper {{
-                background: linear-gradient(145deg, #0A1628, #0E1E3C);
-                border: 1px solid rgba(0,212,255,0.2);
-                border-radius: 12px;
-                padding: 20px;
-                margin: 8px 0;
-                position: relative;
-                overflow: hidden;
-                box-shadow:
-                    0 4px 6px rgba(0,0,0,0.4),
-                    0 8px 15px rgba(0,0,0,0.3),
-                    0 20px 40px rgba(0,0,0,0.25),
-                    0 0 0 1px rgba(0,212,255,0.05),
-                    inset 0 1px 0 rgba(255,255,255,0.06);
-                animation: diagramFadeIn 0.6s cubic-bezier(0.16,1,0.3,1) forwards;
-                opacity: 0;
-                transform: translateY(8px);
-            }}
-            .diagram-wrapper::before {{
-                content: '';
-                position: absolute;
-                top: 0; left: 0; right: 0;
-                height: 2px;
-                background: linear-gradient(90deg,
-                    transparent 0%,
-                    rgba(0,212,255,0.6) 30%,
-                    rgba(0,212,255,0.9) 50%,
-                    rgba(0,212,255,0.6) 70%,
-                    transparent 100%
-                );
-            }}
-            @keyframes diagramFadeIn {{
-                to {{ opacity: 1; transform: translateY(0); }}
-            }}
-            .diagram-title {{
-                font-family: 'JetBrains Mono', monospace;
-                font-size: 10px;
-                color: rgba(0,212,255,0.7);
-                letter-spacing: 0.2em;
-                text-transform: uppercase;
-                margin-bottom: 12px;
-            }}
-            #mermaid-container svg {{
-                filter:
-                    drop-shadow(0 4px 8px rgba(0,0,0,0.5))
-                    drop-shadow(0 0 20px rgba(0,212,255,0.08));
-                transition: filter 0.3s ease;
-                max-width: 100%;
-                height: auto;
-            }}
-            #mermaid-container svg:hover {{
-                filter:
-                    drop-shadow(0 8px 16px rgba(0,0,0,0.6))
-                    drop-shadow(0 0 30px rgba(0,212,255,0.15));
-            }}
-        </style>
-        </head>
-        <body>
-        <div class="diagram-wrapper">
-            {title_html}
-            <div id="mermaid-container">
-                <div class="mermaid">{escaped}</div>
-            </div>
-        </div>
-        <script type="module">
-            import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-            mermaid.initialize({{
-                startOnLoad: true,
-                look: 'neo',
-                theme: 'base',
-                fontFamily: 'JetBrains Mono, monospace',
-                fontSize: 13,
-                themeVariables: {{
-                    primaryColor:        '#1A3050',
-                    primaryBorderColor:  '#00D4FF',
-                    primaryTextColor:    '#E8F4FF',
-                    secondaryColor:      '#0D1E35',
-                    secondaryBorderColor:'#00A0C0',
-                    secondaryTextColor:  '#C0D8F0',
-                    tertiaryColor:       '#0A1628',
-                    tertiaryBorderColor: '#4A7090',
-                    lineColor:           '#00D4FF',
-                    textColor:           '#E8F4FF',
-                    mainBkg:             '#1A3050',
-                    clusterBkg:          '#0D1E35',
-                    edgeLabelBackground: '#0E1E3C',
-                    nodeBorder:          '#00D4FF',
-                    titleColor:          '#00D4FF',
-                    attributeBackgroundColorEven: '#0A1628',
-                    attributeBackgroundColorOdd:  '#0D1E35',
-                }},
-                flowchart: {{
-                    htmlLabels: true,
-                    curve: 'basis',
-                    padding: 20,
-                    nodeSpacing: 50,
-                    rankSpacing: 60,
-                    useMaxWidth: true,
-                }},
-                sequence: {{
-                    useMaxWidth: true,
-                    boxMargin: 10,
-                    mirrorActors: false,
-                    messageMargin: 40,
-                }},
-                classDiagram: {{ useMaxWidth: true }},
-            }});
-        </script>
-        </body>
-        </html>
-        """, height=420, scrolling=True)
 
 
 def render_confidence_badge(source_type: str = "model", has_rag: bool = False) -> None:
@@ -1085,7 +1357,7 @@ def render_image_explainer(student: dict, ollama_client) -> None:
                     (int(img.width * ratio), int(img.height * ratio)),
                     Image.LANCZOS,
                 )
-            st.image(img, use_container_width=True)
+            st.image(img, width="stretch")
 
         with col2:
             if st.button("🔍 Explain This", type="primary", key="btn_explain_image"):
@@ -1094,10 +1366,11 @@ def render_image_explainer(student: dict, ollama_client) -> None:
                 img_b64 = base64.b64encode(buf.getvalue()).decode()
 
                 with st.spinner("Dr. Omni is analysing the image..."):
-                    import ollama as _ollama_lib
+                    from config import OLLAMA_VISION_MODEL
                     try:
-                        resp = _ollama_lib.chat(
-                            model="gemma4:e4b",
+                        # Vision needs a model with an image projector, so it is configured separately
+                        resp = ollama_client._client.chat(
+                            model=OLLAMA_VISION_MODEL,
                             messages=[{
                                 "role": "user",
                                 "content": (
@@ -1202,36 +1475,117 @@ def render_virtual_teacher_mode(student: dict, ollama_client, db, rag=None):
             st.markdown("<br>", unsafe_allow_html=True)
             start = st.button("🎓 Teach Me", type="primary",
                               disabled=not bool(topic.strip()),
-                              use_container_width=True)
+                              width="stretch")
 
         if start:
-            prog = st.progress(0)
-            stat = st.empty()
-            stat.markdown(
-                '<div style="color:#00D4FF;font-family:Exo 2,sans-serif;'
-                'font-size:0.9rem;padding:12px;">⬡ Dr. Omni is reading your materials...</div>',
-                unsafe_allow_html=True
-            )
-            prog.progress(15)
-            stat.markdown(
-                '<div style="color:#FFB800;font-family:Exo 2,sans-serif;'
-                'font-size:0.9rem;padding:12px;">⬡ Preparing your lesson on '
-                + topic + '...</div>',
-                unsafe_allow_html=True
-            )
-            prog.progress(40)
-            lesson = teacher.teach(topic.strip(), subject, student_id, language)
-            prog.progress(90)
-            stat.markdown(
-                '<div style="color:#00C850;font-family:Exo 2,sans-serif;'
-                'font-size:0.9rem;padding:12px;">✓ Lesson ready!</div>',
-                unsafe_allow_html=True
-            )
-            prog.progress(100)
-            prog.empty()
-            stat.empty()
-            st.session_state["vt_lesson"]       = lesson
-            st.session_state["vt_topic"]        = topic.strip()
+            saved_topic_input = topic.strip()
+            with st.status(
+                "🦉 Dr. Omni is preparing your lesson...",
+                expanded=True,
+            ) as _status:
+                _status.write("📖 Searching your study materials...")
+
+                rag_context = ""
+                try:
+                    rag_context, _ = retrieve_context_hybrid(
+                        saved_topic_input,
+                        subject=subject,
+                    )
+                except Exception:
+                    rag_context = ""
+
+                _status.write(
+                    "🧠 Generating lesson + comprehension check in parallel..."
+                )
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _executor:
+                    _f_lesson = _executor.submit(
+                        teacher.teach,
+                        saved_topic_input,
+                        subject,
+                        student_id,
+                        language,
+                    )
+                    _f_mid = _executor.submit(
+                        teacher._generate_mid_question_fast,
+                        topic=saved_topic_input,
+                        subject=subject,
+                        language=language,
+                    )
+
+                    _lesson = None
+                    try:
+                        _lesson = _f_lesson.result(timeout=90)
+                    except concurrent.futures.TimeoutError:
+                        _lesson = None
+                    except Exception:
+                        _lesson = None
+
+                    _mid_q_fast = None
+                    try:
+                        _mid_q_fast = _f_mid.result(timeout=30)
+                    except Exception:
+                        _mid_q_fast = None
+
+                _status.write("✅ Lesson ready — loading...")
+                _status.update(
+                    label="Lesson ready!",
+                    state="complete",
+                    expanded=False,
+                )
+
+            if _lesson is not None:
+                _valid, _reason = _validate_lesson(_lesson)
+                if not _valid:
+                    _lesson = None
+
+            if _lesson is None:
+                st.markdown("""
+                <div class="omni-card fade-in" style="
+                  border-color:rgba(255,71,87,0.3);
+                  padding:20px 24px;">
+                  <div class="omni-chip omni-chip-red">
+                    ⚠️ Incomplete Response
+                  </div>
+                  <p style="color:#8899AA; margin:12px 0 0;
+                            font-family:'DM Sans',sans-serif;
+                            font-size:0.9rem;">
+                    The lesson response was incomplete or timed out.
+                    This usually means Ollama is processing slowly
+                    or the topic was very complex.
+                  </p>
+                </div>
+                """, unsafe_allow_html=True)
+                _c1, _c2 = st.columns(2)
+                with _c1:
+                    if st.button(
+                        "🔄 Retry (simpler prompt)",
+                        type="primary",
+                        width="stretch",
+                    ):
+                        st.session_state.pop("vt_lesson", None)
+                        st.session_state["vt_use_simple_prompt"] = True
+                        st.rerun()
+                with _c2:
+                    if st.button(
+                        "📖 Try different topic",
+                        width="stretch",
+                    ):
+                        for _k in [
+                            "vt_lesson", "vt_topic", "vt_phase",
+                            "vt_use_simple_prompt", "vt_mid_answered",
+                            "vt_mid_result", "vt_answers", "vt_recap",
+                        ]:
+                            st.session_state.pop(_k, None)
+                        st.rerun()
+                return
+
+            if _mid_q_fast and isinstance(_mid_q_fast, dict):
+                if not _lesson.get("mid_question") and not _lesson.get("_mid_question"):
+                    _lesson["_mid_question"] = _mid_q_fast
+
+            st.session_state["vt_lesson"]       = _lesson
+            st.session_state["vt_topic"]        = saved_topic_input
             st.session_state["vt_phase"]        = "hook"
             st.session_state["vt_mid_answered"] = False
             st.session_state["vt_mid_result"]   = None
@@ -1244,6 +1598,27 @@ def render_virtual_teacher_mode(student: dict, ollama_client, db, rag=None):
         lesson = st.session_state.get("vt_lesson")
         if not lesson:
             st.info("Enter a topic above and click **Teach Me** to begin.")
+            return
+
+        # Validate lesson — show error UI if incomplete
+        _valid, _reason = _validate_lesson(lesson)
+        if not _valid:
+            st.error(
+                f"⚠️ The lesson response was incomplete ({_reason}). "
+                "This usually means Ollama is slow or the topic was too complex."
+            )
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🔄 Retry with simpler prompt", type="primary",
+                             key="btn_vt_retry_simple"):
+                    st.session_state.pop("vt_lesson", None)
+                    st.session_state["vt_use_simple_prompt"] = True
+                    st.rerun()
+            with col2:
+                if st.button("📖 Try a different topic", key="btn_vt_diff_topic"):
+                    for k in ["vt_lesson", "vt_topic", "vt_phase", "vt_use_simple_prompt"]:
+                        st.session_state.pop(k, None)
+                    st.rerun()
             return
 
         saved_topic = st.session_state.get("vt_topic", "")
@@ -1282,7 +1657,11 @@ def render_virtual_teacher_mode(student: dict, ollama_client, db, rag=None):
             has_rag=has_rag,
         )
 
-        diagram_code = lesson.get("_diagram", "")
+        _llm_diagram = lesson.get("_diagram", "").strip()
+        if _should_use_llm_diagram(_llm_diagram):
+            diagram_code = _llm_diagram
+        else:
+            diagram_code = _make_topic_diagram(saved_topic)
         if diagram_code:
             render_mermaid_diagram(diagram_code,
                                    title=f"Visual Diagram: {saved_topic}")
